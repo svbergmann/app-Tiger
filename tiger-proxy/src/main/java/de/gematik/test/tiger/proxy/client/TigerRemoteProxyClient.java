@@ -81,6 +81,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   public static final String WS_DATA = "/topic/data";
   public static final String WS_ERRORS = "/topic/errors";
   @Getter private final String remoteProxyUrl;
+  @Getter private String connectedRemoteProxyUrl;
   private final WebSocketStompClient tigerProxyStompClient;
 
   @Getter private final List<TigerExceptionDto> receivedRemoteExceptions = new ArrayList<>();
@@ -124,6 +125,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
       @Nullable TigerProxy masterTigerProxy) {
     super(configuration, masterTigerProxy == null ? null : masterTigerProxy.getRbelLogger());
     this.remoteProxyUrl = remoteProxyUrl;
+    this.connectedRemoteProxyUrl = remoteProxyUrl;
     this.masterTigerProxy = masterTigerProxy;
     this.binaryChunksBuffer =
         new MultipleBinaryConnectionParser(
@@ -185,12 +187,12 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     if (isShuttingDown()) {
       return;
     }
-    waitForRemoteTigerProxyToBeOnline(remoteProxyUrl);
+    connectedRemoteProxyUrl = waitForRemoteTigerProxyToBeOnline(remoteProxyUrl);
     if (isShuttingDown()) {
       return;
     }
-    log.info("remote proxy at {} is online, now connecting...", remoteProxyUrl);
-    final String tracingWebSocketUrl = getTracingWebSocketUrl(remoteProxyUrl);
+    log.info("remote proxy at {} is online, now connecting...", connectedRemoteProxyUrl);
+    final var tracingWebSocketUrl = getTracingWebSocketUrl(connectedRemoteProxyUrl);
     tigerProxyStompClient
         .connectAsync(tracingWebSocketUrl, tigerStompSessionHandler)
         .orTimeout(connectionTimeoutInSeconds, TimeUnit.SECONDS)
@@ -204,12 +206,13 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
                   () -> {
                     log.info(
                         "Connected to remote proxy at {}, now downloading traffic...",
-                        remoteProxyUrl);
+                        connectedRemoteProxyUrl);
                     if (downloadTraffic) {
                       downloadTrafficFromRemoteProxy();
                     }
                     log.info(
-                        "Successfully downloaded traffic from remote proxy at {}", remoteProxyUrl);
+                        "Successfully downloaded traffic from remote proxy at {}",
+                        connectedRemoteProxyUrl);
                   });
               return stompSessionInCallback;
             })
@@ -224,7 +227,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public TigerProxyRoute addRoute(TigerProxyRoute tigerRoute) {
-    return Unirest.put(remoteProxyUrl + "/route")
+    return Unirest.put(getBaseUrl() + "/route")
         .body(tigerRoute)
         .contentType(MediaType.APPLICATION_JSON_VALUE)
         .asObject(TigerProxyRoute.class)
@@ -243,8 +246,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   public void removeRoute(String routeId) {
     Assert.hasText(routeId, () -> "No route ID given!");
 
-    final Optional<Boolean> isInternalOptional =
-        Unirest.get(remoteProxyUrl + "/route")
+    final var isInternalOptional =
+        Unirest.get(getBaseUrl() + "/route")
             .asObject(new GenericType<List<TigerProxyRoute>>() {})
             .getBody()
             .stream()
@@ -260,7 +263,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
           "Could not delete route with id '" + routeId + "': Is internal route!");
     }
 
-    Unirest.delete(remoteProxyUrl + "/route/" + routeId)
+    Unirest.delete(getBaseUrl() + "/route/" + routeId)
         .asString()
         .ifFailure(
             httpResponse -> {
@@ -271,7 +274,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public void clearAllRoutes() {
-    Unirest.get(remoteProxyUrl + "/route")
+    Unirest.get(getBaseUrl() + "/route")
         .asObject(new GenericType<List<TigerProxyRoute>>() {})
         .getBody()
         .stream()
@@ -282,7 +285,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public String getBaseUrl() {
-    return remoteProxyUrl;
+    return connectedRemoteProxyUrl;
   }
 
   @Override
@@ -292,7 +295,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public List<TigerProxyRoute> getRoutes() {
-    return Unirest.get(remoteProxyUrl + "/route")
+    return Unirest.get(getBaseUrl() + "/route")
         .asObject(new GenericType<List<TigerProxyRoute>>() {})
         .ifFailure(
             response -> {
@@ -307,7 +310,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public RbelModificationDescription addModificaton(RbelModificationDescription modification) {
-    return Unirest.put(remoteProxyUrl + "/modification")
+    return Unirest.put(getBaseUrl() + "/modification")
         .body(modification)
         .contentType(MediaType.APPLICATION_JSON_VALUE)
         .asObject(RbelModificationDescription.class)
@@ -324,7 +327,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Override
   public List<RbelModificationDescription> getModifications() {
-    return Unirest.get(remoteProxyUrl + "/modification")
+    return Unirest.get(getBaseUrl() + "/modification")
         .asObject(new GenericType<List<RbelModificationDescription>>() {})
         .ifFailure(
             response -> {
@@ -340,7 +343,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   @Override
   public void removeModification(String modificationName) {
     Assert.hasText(modificationName, () -> "No modification name given!");
-    Unirest.delete(remoteProxyUrl + "/modification/" + modificationName)
+    Unirest.delete(getBaseUrl() + "/modification/" + modificationName)
         .asEmpty()
         .ifFailure(
             httpResponse -> {
