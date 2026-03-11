@@ -218,7 +218,7 @@ public class TigerRemoteTrafficDownloader {
   }
 
   private String getRemoteProxyUrl() {
-    return tigerRemoteProxyClient.getRemoteProxyUrl();
+    return tigerRemoteProxyClient.getBaseUrl();
   }
 
   @Data

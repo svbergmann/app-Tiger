@@ -53,8 +53,13 @@ class TigerRemoteProxyClientSchedulingAdditionalTest {
   }
 
   private TigerRemoteProxyClient newClient(int timeoutMs) {
+    return newClient(timeoutMs, false);
+  }
+
+  private TigerRemoteProxyClient newClient(int timeoutMs, boolean downloadInitialTraffic) {
     TigerProxyConfiguration cfg =
         TigerProxyConfiguration.builder()
+            .downloadInitialTrafficFromEndpoints(downloadInitialTraffic)
             .waitForPreviousMessageBeforeParsingInSeconds((float) (timeoutMs / 1000.0))
             .proxyLogLevel("WARN")
             .build();
@@ -151,6 +156,46 @@ class TigerRemoteProxyClientSchedulingAdditionalTest {
         (RingBufferHashMap<String, List<Runnable>>)
             ReflectionTestUtils.getField(client, "parsingTasksWaitingForUuid");
     assertThat(waiting.get(prevUuid)).as("Waiting entry for prev should be cleared").isEmpty();
+  }
+
+  @Test
+  @DisplayName(
+      "Missing historical previous is bypassed immediately when initial traffic download is disabled")
+  void scheduleAfterMessage_missingHistoricalPrevious_executesImmediatelyWithoutInitialDownload()
+      throws Exception {
+    client = newClient(500, false);
+
+    CountDownLatch latch = new CountDownLatch(1);
+
+    client.scheduleAfterMessage("historical-prev-uuid", latch::countDown, "first-live-uuid");
+
+    assertThat(latch.await(150, TimeUnit.MILLISECONDS))
+        .as("First live message should not wait for traffic that predates the subscription")
+        .isTrue();
+  }
+
+  @Test
+  @DisplayName(
+      "Subsequent live message still waits for the immediately preceding live message to finish")
+  void scheduleAfterMessage_followUpLiveMessageStillWaitsForPreviousLiveMessage() throws Exception {
+    client = newClient(500, false);
+
+    CountDownLatch firstLatch = new CountDownLatch(1);
+    client.scheduleAfterMessage("historical-prev-uuid", firstLatch::countDown, "first-live-uuid");
+    assertThat(firstLatch.await(150, TimeUnit.MILLISECONDS)).isTrue();
+
+    CountDownLatch secondLatch = new CountDownLatch(1);
+    client.scheduleAfterMessage("first-live-uuid", secondLatch::countDown, "second-live-uuid");
+
+    assertThat(secondLatch.getCount())
+        .as("Second live message should stay queued behind the first one")
+        .isEqualTo(1);
+
+    @SuppressWarnings("unchecked")
+    RingBufferHashMap<String, List<Runnable>> waiting =
+        (RingBufferHashMap<String, List<Runnable>>)
+            ReflectionTestUtils.getField(client, "parsingTasksWaitingForUuid");
+    assertThat(waiting.get("first-live-uuid")).isNotEmpty();
   }
 
   @Test

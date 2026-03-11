@@ -243,6 +243,18 @@ class TigerRemoteProxyClientTest {
   }
 
   @Test
+  void shouldNormalizeLoopbackControlUrlsToLocalhost() {
+    assertThat(TigerRemoteProxyClient.normalizeLoopbackRemoteProxyUrl("http://127.0.0.2:9999"))
+        .isEqualTo("http://localhost:9999");
+    assertThat(TigerRemoteProxyClient.normalizeLoopbackRemoteProxyUrl("http://localhost:9999"))
+        .isEqualTo("http://localhost:9999");
+    assertThat(
+            TigerRemoteProxyClient.normalizeLoopbackRemoteProxyUrl(
+                "http://example.invalid:9999"))
+        .isEqualTo("http://example.invalid:9999");
+  }
+
+  @Test
   void sendMessage_shouldTriggerListener() {
     AtomicInteger listenerCallCounter = new AtomicInteger(0);
     tigerRemoteProxyClient.addRbelMessageListener(msg -> listenerCallCounter.incrementAndGet());

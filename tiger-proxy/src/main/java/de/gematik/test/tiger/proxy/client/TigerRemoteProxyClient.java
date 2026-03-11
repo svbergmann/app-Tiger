@@ -46,6 +46,10 @@ import de.gematik.test.tiger.proxy.handler.MultipleBinaryConnectionParser;
 import de.gematik.test.tiger.proxy.handler.SingleConnectionParser;
 import jakarta.websocket.ContainerProvider;
 import jakarta.websocket.WebSocketContainer;
+import java.net.InetAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.*;
@@ -82,6 +86,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   public static final String WS_ERRORS = "/topic/errors";
   @Getter private final String remoteProxyUrl;
   @Getter private String connectedRemoteProxyUrl;
+  private final String remoteProxyControlUrl;
   private final WebSocketStompClient tigerProxyStompClient;
 
   @Getter private final List<TigerExceptionDto> receivedRemoteExceptions = new ArrayList<>();
@@ -125,7 +130,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
       @Nullable TigerProxy masterTigerProxy) {
     super(configuration, masterTigerProxy == null ? null : masterTigerProxy.getRbelLogger());
     this.remoteProxyUrl = remoteProxyUrl;
-    this.connectedRemoteProxyUrl = remoteProxyUrl;
+    this.remoteProxyControlUrl = normalizeLoopbackRemoteProxyUrl(remoteProxyUrl);
+    this.connectedRemoteProxyUrl = this.remoteProxyControlUrl;
     this.masterTigerProxy = masterTigerProxy;
     this.binaryChunksBuffer =
         new MultipleBinaryConnectionParser(
@@ -176,6 +182,36 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     return remoteProxyUrl.replaceFirst("http", "ws") + "/tracing";
   }
 
+  static String normalizeLoopbackRemoteProxyUrl(String remoteProxyUrl) {
+    try {
+      URI uri = new URI(remoteProxyUrl);
+      if (uri.getHost() == null) {
+        return remoteProxyUrl;
+      }
+
+      InetAddress inetAddress = InetAddress.getByName(uri.getHost());
+      if (!inetAddress.isLoopbackAddress() || "localhost".equalsIgnoreCase(uri.getHost())) {
+        return remoteProxyUrl;
+      }
+
+      return new URI(
+              uri.getScheme(),
+              uri.getUserInfo(),
+              "localhost",
+              uri.getPort(),
+              uri.getPath(),
+              uri.getQuery(),
+              uri.getFragment())
+          .toString();
+    } catch (URISyntaxException | UnknownHostException e) {
+      return remoteProxyUrl;
+    }
+  }
+
+  String getRemoteProxyControlUrl() {
+    return remoteProxyControlUrl;
+  }
+
   private void downloadTrafficFromRemoteProxy() {
     new TigerRemoteTrafficDownloader(this).execute();
   }
@@ -187,7 +223,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     if (isShuttingDown()) {
       return;
     }
-    connectedRemoteProxyUrl = waitForRemoteTigerProxyToBeOnline(remoteProxyUrl);
+    connectedRemoteProxyUrl = waitForRemoteTigerProxyToBeOnline(remoteProxyControlUrl);
     if (isShuttingDown()) {
       return;
     }
@@ -519,6 +555,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
    * the buffer is full.
    */
   private final RingBufferHashSet<String> removedMessageUuids = new RingBufferHashSet<>(10_000);
+  private final RingBufferHashSet<String> remoteMessageUuidsSeenSinceConnect =
+      new RingBufferHashSet<>(10_000);
 
   private void handleMessageRemovalFromHistory(RbelElement element) {
     if (!element.hasFacet(NextMessageParsedFacet.class)) {
@@ -530,12 +568,15 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     synchronized (parsingTasksWaitingForUuid) {
       parsingTasksWaitingForUuid.clear();
       removedMessageUuids.clear();
+      remoteMessageUuidsSeenSinceConnect.clear();
     }
   }
 
   public void scheduleAfterMessage(
       String previousMessageUuid, Runnable parseMessageTask, String thisMessageUuid) {
     synchronized (parsingTasksWaitingForUuid) {
+      remoteMessageUuidsSeenSinceConnect.add(thisMessageUuid);
+
       if (removedMessageUuids.contains(previousMessageUuid)) {
         log.trace(
             "parsing {} immediately, prev {} is already finished and removed",
@@ -545,10 +586,20 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
         removedMessageUuids.remove(previousMessageUuid);
         return;
       }
+
       Optional<RbelElement> previousMessage =
           getRbelLogger().getRbelConverter().findMessageByUuid(previousMessageUuid);
       final Optional<RbelConversionPhase> previousMessageConversionPhase =
           previousMessage.map(RbelElement::getConversionPhase);
+
+      if (shouldBypassMissingPreviousMessage(previousMessageUuid, previousMessage)) {
+        log.debug(
+            "Parsing {} immediately, prev {} belongs to traffic before the live mesh attach",
+            thisMessageUuid,
+            previousMessageUuid);
+        meshHandlerPool.submit(parseMessageTask);
+        return;
+      }
 
       if (previousMessageConversionPhase.map(RbelConversionPhase::isFinished).orElse(false)) {
         log.trace(
@@ -579,6 +630,16 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
             thisMessageUuid, previousMessageUuid, parseMessageTask);
       }
     }
+  }
+
+  private boolean shouldBypassMissingPreviousMessage(
+      String previousMessageUuid, Optional<RbelElement> previousMessage) {
+    return !getTigerProxyConfiguration().isDownloadInitialTrafficFromEndpoints()
+        && previousMessage.isEmpty()
+        && !partiallyReceivedMessageMap.containsKey(previousMessageUuid)
+        && !getRbelLogger().getRbelConverter().getKnownMessageUuids().contains(previousMessageUuid)
+        && !removedMessageUuids.contains(previousMessageUuid)
+        && !remoteMessageUuidsSeenSinceConnect.contains(previousMessageUuid);
   }
 
   private void scheduleDirectParsingIfPreviousMessageHasNotEvenPartiallyArrived(
