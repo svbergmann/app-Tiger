@@ -76,6 +76,7 @@
         <module>tiger-proxy-scrollable-webui</module>
         <module>tiger-standalone-proxy</module>
         <module>tiger-testenv-mgr</module>
+        <module>tiger-tls-tests</module>
         <module>tiger-test-lib</module>
         <module>tiger-maven-plugin</module>
         <module>tiger-uitests</module>
