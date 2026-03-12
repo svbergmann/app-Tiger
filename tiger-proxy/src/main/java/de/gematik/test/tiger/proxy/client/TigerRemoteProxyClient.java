@@ -634,12 +634,26 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   private boolean shouldBypassMissingPreviousMessage(
       String previousMessageUuid, Optional<RbelElement> previousMessage) {
-    return !getTigerProxyConfiguration().isDownloadInitialTrafficFromEndpoints()
-        && previousMessage.isEmpty()
-        && !partiallyReceivedMessageMap.containsKey(previousMessageUuid)
-        && !getRbelLogger().getRbelConverter().getKnownMessageUuids().contains(previousMessageUuid)
-        && !removedMessageUuids.contains(previousMessageUuid)
-        && !remoteMessageUuidsSeenSinceConnect.contains(previousMessageUuid);
+    // When we attach to the live mesh without downloading historical traffic first,
+    // the first live message can legitimately point to a predecessor from before our attach.
+    // In that case waiting would only burn the fallback timeout, so we bypass the dependency
+    // check only if the predecessor is unknown across all local tracking structures.
+    boolean liveAttachWithoutInitialHistory =
+        !getTigerProxyConfiguration().isDownloadInitialTrafficFromEndpoints();
+    boolean previousMessageIsUnknownLocally =
+        previousMessage.isEmpty()
+            && !partiallyReceivedMessageMap.containsKey(previousMessageUuid)
+            && !getRbelLogger()
+                .getRbelConverter()
+                .getKnownMessageUuids()
+                .contains(previousMessageUuid)
+            && !removedMessageUuids.contains(previousMessageUuid);
+    boolean previousMessageWasNotSeenInThisLiveSession =
+        !remoteMessageUuidsSeenSinceConnect.contains(previousMessageUuid);
+
+    return liveAttachWithoutInitialHistory
+        && previousMessageIsUnknownLocally
+        && previousMessageWasNotSeenInThisLiveSession;
   }
 
   private void scheduleDirectParsingIfPreviousMessageHasNotEvenPartiallyArrived(
