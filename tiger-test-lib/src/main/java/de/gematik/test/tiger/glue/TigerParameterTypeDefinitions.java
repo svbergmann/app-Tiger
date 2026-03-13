@@ -124,6 +124,17 @@ public class TigerParameterTypeDefinitions {
     return RbelContentType.seekValueFor(resolveToString(value));
   }
 
+  /**
+   * Resolves a Tiger Proxy resource type used in remote standalone Tiger Proxy TGR steps.
+   *
+   * @param value resource type expression from the step
+   * @return matching Tiger Proxy resource type
+   */
+  @ParameterType("route|routes|modification|modifications")
+  public static TigerProxyResourceType tigerProxyResourceType(String value) {
+    return TigerProxyResourceType.fromExpression(value);
+  }
+
   private static String resolveToString(String value) {
     if (value.charAt(0) == '"' || value.charAt(0) == '\'') {
       return resolve(value.substring(1, value.length() - 1)).getContentAsString();

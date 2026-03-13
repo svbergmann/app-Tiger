@@ -84,6 +84,10 @@ public class TigerProxyConfiguration {
   @Builder.Default private int maximumTrafficDownloadPageSize = 100_000;
   @Builder.Default private int trafficDownloadPageSize = 50;
   private String name;
+  /**
+   * Logical cluster identifier used to address a standalone Tiger Proxy instance from TGR steps.
+   */
+  private String clusterId;
 
   @Builder.Default private boolean isStandalone = true;
 

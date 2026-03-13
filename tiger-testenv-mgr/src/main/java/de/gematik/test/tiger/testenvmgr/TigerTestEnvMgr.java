@@ -47,6 +47,7 @@ import de.gematik.test.tiger.testenvmgr.config.Configuration;
 import de.gematik.test.tiger.testenvmgr.env.*;
 import de.gematik.test.tiger.testenvmgr.servers.AbstractTigerServer;
 import de.gematik.test.tiger.testenvmgr.servers.TigerServerLogListener;
+import de.gematik.test.tiger.testenvmgr.servers.TigerProxyServer;
 import de.gematik.test.tiger.testenvmgr.servers.TigerServerStatus;
 import de.gematik.test.tiger.testenvmgr.servers.TigerServerType;
 import de.gematik.test.tiger.testenvmgr.servers.log.TigerServerLogManager;
@@ -690,6 +691,38 @@ public class TigerTestEnvMgr
 
   public Optional<AbstractTigerServer> findServer(String serverName) {
     return Optional.ofNullable(servers.get(serverName));
+  }
+
+  /**
+   * Finds the unique standalone Tiger Proxy server configured with the given cluster identifier.
+   *
+   * @param clusterId cluster identifier configured at
+   *     {@code tigerProxyConfiguration.clusterId}
+   * @return the matching standalone Tiger Proxy server if one exists
+   * @throws TigerTestEnvException if more than one server uses the same cluster identifier
+   */
+  public Optional<TigerProxyServer> findTigerProxyServerByClusterId(String clusterId) {
+    final List<TigerProxyServer> matchingServers =
+        servers.values().stream()
+            .filter(TigerProxyServer.class::isInstance)
+            .map(TigerProxyServer.class::cast)
+            .filter(
+                server ->
+                    StringUtils.equals(
+                        server.getConfiguration().getTigerProxyConfiguration().getClusterId(),
+                        clusterId))
+            .toList();
+
+    if (matchingServers.size() > 1) {
+      throw new TigerTestEnvException(
+          "Expected exactly one Tiger Proxy server for clusterId '"
+              + clusterId
+              + "' but found "
+              + matchingServers.size()
+              + ".");
+    }
+
+    return matchingServers.stream().findFirst();
   }
 
   /**
