@@ -31,6 +31,10 @@ import de.gematik.test.tiger.tlstests.TlsComplianceRunner;
 import de.gematik.test.tiger.tlstests.TlsConnectionConfiguration;
 import de.gematik.test.tiger.tlstests.TlsFeatureSupportReport;
 import de.gematik.test.tiger.tlstests.TlsFeatureSupportResult;
+import de.gematik.test.tiger.tlstests.TlsServerConnectionConfiguration;
+import de.gematik.test.tiger.tlstests.TlsServerObservationHandle;
+import de.gematik.test.tiger.tlstests.TlsServerObservationReport;
+import de.gematik.test.tiger.tlstests.TlsServerObservationRunner;
 import de.gematik.test.tiger.tlstests.TlsTestCase;
 import de.gematik.test.tiger.tlstests.TlsTestProfile;
 import de.gematik.test.tiger.tlstests.TlsTestReport;
@@ -54,6 +58,7 @@ public class TigerTlsTestsGlue {
 
   private final TlsTestRunner tlsTestRunner;
   private final TlsComplianceRunner tlsComplianceRunner;
+  private final TlsServerObservationRunner tlsServerObservationRunner;
   private TlsTestReport lastTlsTestReport;
   private TlsFeatureSupportReport lastTlsProtocolScanReport;
   private TlsFeatureSupportReport lastTlsCipherSuiteScanReport;
@@ -61,14 +66,17 @@ public class TigerTlsTestsGlue {
   private TlsFeatureSupportReport lastTlsNamedGroupScanReport;
   private TlsFeatureSupportReport lastTlsSignatureSchemeScanReport;
   private TlsBehaviorProbeReport lastTlsBehaviorProbeReport;
+  private TlsServerObservationHandle lastTlsServerObservationHandle;
+  private TlsServerObservationReport lastTlsServerObservationReport;
   private TlsConnectionConfiguration tlsConnectionConfiguration;
+  private TlsServerConnectionConfiguration tlsServerConnectionConfiguration;
   private String configuredSniHostName;
 
   /**
    * Creates the TLS glue with default runner implementations.
    */
   public TigerTlsTestsGlue() {
-    this(new TlsTestRunner(), new TlsComplianceRunner());
+    this(new TlsTestRunner(), new TlsComplianceRunner(), new TlsServerObservationRunner());
   }
 
   /**
@@ -77,7 +85,18 @@ public class TigerTlsTestsGlue {
    * @param tlsTestRunner profile runner used for built-in profile execution
    */
   TigerTlsTestsGlue(TlsTestRunner tlsTestRunner) {
-    this(tlsTestRunner, new TlsComplianceRunner());
+    this(tlsTestRunner, new TlsComplianceRunner(), new TlsServerObservationRunner());
+  }
+
+  /**
+   * Creates the TLS glue with injectable profile and compliance runners and the default
+   * server-observation runner.
+   *
+   * @param tlsTestRunner profile runner used for built-in profile execution
+   * @param tlsComplianceRunner compliance runner used for scans and behavior probes
+   */
+  TigerTlsTestsGlue(TlsTestRunner tlsTestRunner, TlsComplianceRunner tlsComplianceRunner) {
+    this(tlsTestRunner, tlsComplianceRunner, new TlsServerObservationRunner());
   }
 
   /**
@@ -85,10 +104,15 @@ public class TigerTlsTestsGlue {
    *
    * @param tlsTestRunner profile runner used for built-in profile execution
    * @param tlsComplianceRunner compliance runner used for scans and behavior probes
+   * @param tlsServerObservationRunner runner used for server-side TLS observations
    */
-  TigerTlsTestsGlue(TlsTestRunner tlsTestRunner, TlsComplianceRunner tlsComplianceRunner) {
+  TigerTlsTestsGlue(
+      TlsTestRunner tlsTestRunner,
+      TlsComplianceRunner tlsComplianceRunner,
+      TlsServerObservationRunner tlsServerObservationRunner) {
     this.tlsTestRunner = tlsTestRunner;
     this.tlsComplianceRunner = tlsComplianceRunner;
+    this.tlsServerObservationRunner = tlsServerObservationRunner;
     resetExecutionConfiguration();
   }
 
@@ -237,6 +261,206 @@ public class TigerTlsTestsGlue {
   @When("TGR clear TLS SNI host")
   public void clearTlsSniHostName() {
     configuredSniHostName = null;
+  }
+
+  /** Resets TLS server-observation settings to their defaults. */
+  @Wenn("TGR setze TLS-Server-Observation-Konfiguration zurück")
+  @When("TGR reset TLS server observation configuration")
+  public void resetTlsServerObservationConfiguration() {
+    closeLastObservationHandleQuietly();
+    lastTlsServerObservationReport = null;
+    tlsServerConnectionConfiguration = TlsServerConnectionConfiguration.defaults();
+  }
+
+  /**
+   * Configures the server identity used by subsequent TLS server observations.
+   *
+   * @param identityToken PKI identity token in Tiger compact format
+   */
+  @Wenn("TGR setze TLS-Server-Identity auf {tigerResolvedString}")
+  @When("TGR set TLS server identity to {tigerResolvedString}")
+  public void setTlsServerIdentity(String identityToken) {
+    updateServerConnectionConfiguration(
+        current ->
+            current.withServerIdentity(new TigerConfigurationPkiIdentity(identityToken)));
+  }
+
+  /** Clears the configured TLS server identity for subsequent observations. */
+  @Wenn("TGR entferne TLS-Server-Identity")
+  @When("TGR clear TLS server identity")
+  public void clearTlsServerIdentity() {
+    updateServerConnectionConfiguration(current -> current.withServerIdentity(null));
+  }
+
+  /**
+   * Configures the trust identity used to validate client certificates during subsequent TLS
+   * server observations.
+   *
+   * @param identityToken PKI identity token in Tiger compact format
+   */
+  @Wenn("TGR setze TLS-Server-Trust-Identity auf {tigerResolvedString}")
+  @When("TGR set TLS server trust identity to {tigerResolvedString}")
+  public void setTlsServerTrustIdentity(String identityToken) {
+    updateServerConnectionConfiguration(
+        current ->
+            current.withTrustedClientIdentity(new TigerConfigurationPkiIdentity(identityToken)));
+  }
+
+  /** Clears the configured client-certificate trust identity for subsequent TLS server observations. */
+  @Wenn("TGR entferne TLS-Server-Trust-Identity")
+  @When("TGR clear TLS server trust identity")
+  public void clearTlsServerTrustIdentity() {
+    updateServerConnectionConfiguration(current -> current.withTrustedClientIdentity(null));
+  }
+
+  /** Enables required client certificates for subsequent TLS server observations. */
+  @Wenn("TGR aktiviere TLS-Server-Client-Zertifikatspflicht")
+  @When("TGR require TLS server client certificates")
+  public void enableTlsServerClientCertificateRequirement() {
+    updateServerConnectionConfiguration(current -> current.withRequireClientCertificate(true));
+  }
+
+  /** Disables required client certificates for subsequent TLS server observations. */
+  @Wenn("TGR deaktiviere TLS-Server-Client-Zertifikatspflicht")
+  @When("TGR disable TLS server client certificate requirement")
+  public void disableTlsServerClientCertificateRequirement() {
+    updateServerConnectionConfiguration(current -> current.withRequireClientCertificate(false));
+  }
+
+  /**
+   * Configures the timeout used by subsequent TLS server observations.
+   *
+   * @param timeoutSeconds timeout in seconds
+   */
+  @Wenn("TGR setze TLS-Server-Timeout auf {int} Sekunden")
+  @When("TGR set TLS server timeout to {int} seconds")
+  public void setTlsServerTimeoutInSeconds(int timeoutSeconds) {
+    updateServerConnectionConfiguration(
+        current -> current.withTimeout(Duration.ofSeconds(timeoutSeconds)));
+  }
+
+  /**
+   * Configures the local bind host used by subsequent TLS server observations.
+   *
+   * @param bindHost local bind host
+   */
+  @Wenn("TGR setze TLS-Server-Bind-Host auf {tigerResolvedString}")
+  @When("TGR set TLS server bind host to {tigerResolvedString}")
+  public void setTlsServerBindHost(String bindHost) {
+    updateServerConnectionConfiguration(current -> current.withBindHost(parseSingleToken(bindHost, "TLS server bind host")));
+  }
+
+  /**
+   * Configures the server-side TLS protocol list exposed by subsequent observations.
+   *
+   * @param protocolTokens comma-separated protocol list
+   */
+  @Wenn("TGR setze TLS-Server-Protokolle auf {tigerResolvedString}")
+  @When("TGR set TLS server protocols to {tigerResolvedString}")
+  public void setTlsServerEnabledProtocols(String protocolTokens) {
+    updateServerConnectionConfiguration(
+        current -> current.withEnabledProtocols(parseTokenList(protocolTokens, "TLS server protocols")));
+  }
+
+  /** Clears any configured TLS server protocol restrictions. */
+  @Wenn("TGR entferne TLS-Server-Protokollbeschränkung")
+  @When("TGR clear TLS server protocol restriction")
+  public void clearTlsServerEnabledProtocols() {
+    updateServerConnectionConfiguration(current -> current.withEnabledProtocols(List.of()));
+  }
+
+  /**
+   * Configures the server-side TLS cipher-suite list exposed by subsequent observations.
+   *
+   * @param cipherSuiteTokens comma-separated cipher-suite list
+   */
+  @Wenn("TGR setze TLS-Server-Cipher-Suites auf {tigerResolvedString}")
+  @When("TGR set TLS server cipher suites to {tigerResolvedString}")
+  public void setTlsServerEnabledCipherSuites(String cipherSuiteTokens) {
+    updateServerConnectionConfiguration(
+        current ->
+            current.withEnabledCipherSuites(
+                parseTokenList(cipherSuiteTokens, "TLS server cipher suites")));
+  }
+
+  /** Clears any configured TLS server cipher-suite restrictions. */
+  @Wenn("TGR entferne TLS-Server-Cipher-Suite-Beschränkung")
+  @When("TGR clear TLS server cipher suite restriction")
+  public void clearTlsServerEnabledCipherSuites() {
+    updateServerConnectionConfiguration(current -> current.withEnabledCipherSuites(List.of()));
+  }
+
+  /**
+   * Configures the ALPN application protocols exposed by subsequent TLS server observations.
+   *
+   * @param applicationProtocolTokens comma-separated ALPN application-protocol list
+   */
+  @Wenn("TGR setze TLS-Server-Application-Protocols auf {tigerResolvedString}")
+  @When("TGR set TLS server application protocols to {tigerResolvedString}")
+  public void setTlsServerApplicationProtocols(String applicationProtocolTokens) {
+    updateServerConnectionConfiguration(
+        current ->
+            current.withApplicationProtocols(
+                parseTokenList(applicationProtocolTokens, "TLS server application protocols")));
+  }
+
+  /** Clears any configured TLS server ALPN application protocols. */
+  @Wenn("TGR entferne TLS-Server-Application-Protocols")
+  @When("TGR clear TLS server application protocols")
+  public void clearTlsServerApplicationProtocols() {
+    updateServerConnectionConfiguration(current -> current.withApplicationProtocols(List.of()));
+  }
+
+  /**
+   * Starts a one-shot TLS server observation on the requested local TCP port.
+   *
+   * @param port requested local TCP port, or {@code 0} for an ephemeral port
+   * @throws Exception if the observation server cannot be started
+   */
+  @Wenn("TGR starte TLS-Server-Observation auf Port {int}")
+  @When("TGR start TLS server observation on port {int}")
+  public void startTlsServerObservation(int port) throws Exception {
+    closeLastObservationHandleQuietly();
+    lastTlsServerObservationReport = null;
+    lastTlsServerObservationHandle =
+        tlsServerObservationRunner.start(port, tlsServerConnectionConfiguration);
+  }
+
+  /**
+   * Starts a one-shot TLS server observation on an ephemeral local TCP port.
+   *
+   * @throws Exception if the observation server cannot be started
+   */
+  @Wenn("TGR starte TLS-Server-Observation auf einem zufälligen Port")
+  @When("TGR start TLS server observation on an ephemeral port")
+  public void startTlsServerObservationOnEphemeralPort() throws Exception {
+    startTlsServerObservation(0);
+  }
+
+  /**
+   * Stores the port of the running TLS server observation in a local Tiger variable.
+   *
+   * @param variableName local variable receiving the bound TCP port
+   */
+  @Wenn("TGR speichere TLS-Server-Observation-Port in lokaler Variable {tigerResolvedString}")
+  @When("TGR store TLS server observation port in local variable {tigerResolvedString}")
+  public void storeTlsServerObservationPort(String variableName) {
+    TigerGlobalConfiguration.putValue(
+        variableName,
+        Integer.toString(currentServerObservationHandle().port()),
+        ConfigurationValuePrecedence.LOCAL_TEST_CASE_CONTEXT);
+  }
+
+  /**
+   * Waits for the last started TLS server observation to complete.
+   *
+   * @throws Exception if the observation fails or times out
+   */
+  @Wenn("TGR warte auf letzte TLS-Server-Observation")
+  @When("TGR await last TLS server observation")
+  public void awaitLastTlsServerObservation() throws Exception {
+    lastTlsServerObservationReport = currentServerObservationHandle().awaitReport();
+    closeLastObservationHandleQuietly();
   }
 
   /**
@@ -604,6 +828,20 @@ public class TigerTlsTestsGlue {
     TigerGlobalConfiguration.putValue(
         variableName,
         TigerSerializationUtil.toJson(currentBehaviorProbeReport()),
+        ConfigurationValuePrecedence.LOCAL_TEST_CASE_CONTEXT);
+  }
+
+  /**
+   * Stores the last TLS server observation report as JSON in a local Tiger variable.
+   *
+   * @param variableName local variable receiving the JSON report
+   */
+  @Wenn("TGR speichere letzte TLS-Server-Observation in lokaler Variable {tigerResolvedString}")
+  @When("TGR store last TLS server observation in local variable {tigerResolvedString}")
+  public void storeLastTlsServerObservation(String variableName) {
+    TigerGlobalConfiguration.putValue(
+        variableName,
+        TigerSerializationUtil.toJson(currentServerObservationReport()),
         ConfigurationValuePrecedence.LOCAL_TEST_CASE_CONTEXT);
   }
 
@@ -1049,6 +1287,141 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Asserts the verdict of the last TLS server observation.
+   *
+   * @param verdictToken expected verdict token
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation ist {word}")
+  @Then("TGR assert last TLS server observation is {word}")
+  public void assertLastTlsServerObservationVerdict(String verdictToken) {
+    assertThat(currentServerObservationReport().verdict()).isEqualTo(parseVerdict(verdictToken));
+  }
+
+  /**
+   * Asserts that the details of the last TLS server observation match a regular expression.
+   *
+   * @param regex expected regular expression
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation Detail stimmt überein mit {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation detail matches {tigerResolvedString}")
+  public void assertLastTlsServerObservationDetailMatches(String regex) {
+    assertThat(currentServerObservationReport().details()).matches(regex);
+  }
+
+  /**
+   * Asserts the negotiated protocol reported by the last TLS server observation.
+   *
+   * @param protocol expected negotiated protocol
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation verhandelt Protokoll {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation negotiated protocol {tigerResolvedString}")
+  public void assertLastTlsServerObservationNegotiatedProtocol(String protocol) {
+    assertThat(currentServerObservationSessionSummary().negotiatedProtocol()).isEqualTo(protocol);
+  }
+
+  /**
+   * Asserts the negotiated cipher suite reported by the last TLS server observation.
+   *
+   * @param cipherSuite expected negotiated cipher suite
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation verhandelt Cipher Suite {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation negotiated cipher suite {tigerResolvedString}")
+  public void assertLastTlsServerObservationNegotiatedCipherSuite(String cipherSuite) {
+    assertThat(currentServerObservationSessionSummary().negotiatedCipherSuite())
+        .isEqualTo(cipherSuite);
+  }
+
+  /**
+   * Asserts the negotiated ALPN application protocol reported by the last TLS server observation.
+   *
+   * @param applicationProtocol expected negotiated ALPN application protocol
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation verhandelt Application Protocol {tigerResolvedString}")
+  @Then(
+      "TGR assert last TLS server observation negotiated application protocol {tigerResolvedString}")
+  public void assertLastTlsServerObservationApplicationProtocol(String applicationProtocol) {
+    assertThat(currentServerObservationReport().negotiatedApplicationProtocol())
+        .isEqualTo(parseSingleToken(applicationProtocol, "TLS application protocol"));
+  }
+
+  /**
+   * Asserts that the last TLS server observation captured one requested SNI server name.
+   *
+   * @param serverName expected requested SNI server name
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation enthält SNI {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation contains SNI {tigerResolvedString}")
+  public void assertLastTlsServerObservationContainsSni(String serverName) {
+    assertThat(currentServerObservationReport().requestedServerNames())
+        .contains(parseSingleToken(serverName, "TLS SNI server name"));
+  }
+
+  /**
+   * Asserts that the last TLS server observation captured no requested SNI server names.
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation enthält kein SNI")
+  @Then("TGR assert last TLS server observation contains no SNI")
+  public void assertLastTlsServerObservationContainsNoSni() {
+    assertThat(currentServerObservationReport().requestedServerNames()).isEmpty();
+  }
+
+  /**
+   * Asserts that the last TLS server observation captured at least one client certificate.
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation enthält Client-Zertifikat")
+  @Then("TGR assert last TLS server observation contains client certificate")
+  public void assertLastTlsServerObservationContainsClientCertificate() {
+    assertThat(currentServerObservationReport().clientCertificateSubjects()).isNotEmpty();
+  }
+
+  /**
+   * Asserts that the last TLS server observation captured no client certificate.
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation enthält kein Client-Zertifikat")
+  @Then("TGR assert last TLS server observation contains no client certificate")
+  public void assertLastTlsServerObservationContainsNoClientCertificate() {
+    assertThat(currentServerObservationReport().clientCertificateSubjects()).isEmpty();
+  }
+
+  /**
+   * Asserts that one client-certificate subject captured by the last TLS server observation
+   * matches a regular expression.
+   *
+   * @param regex expected regular expression for one captured client-certificate subject
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation Client-Zertifikat-Betreff stimmt überein mit {tigerResolvedString}")
+  @Then(
+      "TGR assert last TLS server observation client certificate subject matches {tigerResolvedString}")
+  public void assertLastTlsServerObservationClientCertificateSubjectMatches(String regex) {
+    assertThat(currentServerObservationReport().clientCertificateSubjects())
+        .anySatisfy(subject -> assertThat(subject).matches(regex));
+  }
+
+  /**
+   * Asserts that the remote address captured by the last TLS server observation matches a regular
+   * expression.
+   *
+   * @param regex expected regular expression for the remote client address
+   */
+  @Dann("TGR prüfe letzte TLS-Server-Observation Remote-Adresse stimmt überein mit {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation remote address matches {tigerResolvedString}")
+  public void assertLastTlsServerObservationRemoteAddressMatches(String regex) {
+    assertThat(currentServerObservationReport().remoteAddress()).matches(regex);
+  }
+
+  /**
+   * Asserts the primary OpenSSL reproduction command of the last TLS server observation.
+   *
+   * @param regex expected regular expression for the primary reproduction command
+   */
+  @Dann("TGR prüfe letztes TLS-Server-Observation-OpenSSL-Kommando stimmt überein mit {tigerResolvedString}")
+  @Then("TGR assert last TLS server observation OpenSSL command matches {tigerResolvedString}")
+  public void assertLastTlsServerObservationOpenSslCommandMatches(String regex) {
+    assertThat(currentServerObservationReport().evidence().primaryReproductionCommand())
+        .hasValueSatisfying(command -> assertThat(command).matches(regex));
+  }
+
+  /**
    * Asserts the primary reproduction command for one protocol scan result.
    *
    * @param protocol scanned protocol token
@@ -1441,10 +1814,40 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Returns the running TLS server observation handle.
+   *
+   * @return running TLS server observation handle
+   */
+  private TlsServerObservationHandle currentServerObservationHandle() {
+    if (lastTlsServerObservationHandle == null) {
+      throw new TigerTlsTestsGlueException(
+          "No running TLS server observation available yet. Start a TLS server observation first.");
+    }
+    return lastTlsServerObservationHandle;
+  }
+
+  /**
+   * Returns the last completed TLS server observation report.
+   *
+   * @return completed TLS server observation report
+   */
+  private TlsServerObservationReport currentServerObservationReport() {
+    if (lastTlsServerObservationReport == null) {
+      throw new TigerTlsTestsGlueException(
+          "No TLS server observation report available yet. Await a TLS server observation first.");
+    }
+    return lastTlsServerObservationReport;
+  }
+
+  /**
    * Resets the reusable TLS execution settings to their defaults.
    */
   private void resetExecutionConfiguration() {
+    closeLastObservationHandleQuietly();
     tlsConnectionConfiguration = TlsConnectionConfiguration.defaults();
+    tlsServerConnectionConfiguration = TlsServerConnectionConfiguration.defaults();
+    lastTlsServerObservationHandle = null;
+    lastTlsServerObservationReport = null;
     configuredSniHostName = null;
   }
 
@@ -1456,6 +1859,34 @@ public class TigerTlsTestsGlue {
   private void updateConnectionConfiguration(
       UnaryOperator<TlsConnectionConfiguration> configurationUpdater) {
     tlsConnectionConfiguration = configurationUpdater.apply(tlsConnectionConfiguration);
+  }
+
+  /**
+   * Applies an immutable update to the reusable TLS server-observation settings.
+   *
+   * @param configurationUpdater immutable server configuration updater
+   */
+  private void updateServerConnectionConfiguration(
+      UnaryOperator<TlsServerConnectionConfiguration> configurationUpdater) {
+    tlsServerConnectionConfiguration =
+        configurationUpdater.apply(tlsServerConnectionConfiguration);
+  }
+
+  /**
+   * Closes the last running TLS server observation handle while suppressing secondary close
+   * failures.
+   */
+  private void closeLastObservationHandleQuietly() {
+    if (lastTlsServerObservationHandle == null) {
+      return;
+    }
+    try {
+      lastTlsServerObservationHandle.close();
+    } catch (Exception e) {
+      log.debug("Ignoring TLS server observation close failure", e);
+    } finally {
+      lastTlsServerObservationHandle = null;
+    }
   }
 
   /**
@@ -1639,6 +2070,20 @@ public class TigerTlsTestsGlue {
             () ->
                 new TigerTlsTestsGlueException(
                     "No TLS signature-scheme scan result available for " + signatureScheme));
+  }
+
+  /**
+   * Returns the negotiated session summary of the last TLS server observation.
+   *
+   * @return negotiated session summary of the last TLS server observation
+   */
+  private de.gematik.test.tiger.tlstests.TlsSessionSummary currentServerObservationSessionSummary() {
+    final TlsServerObservationReport report = currentServerObservationReport();
+    if (report.sessionSummary() == null) {
+      throw new TigerTlsTestsGlueException(
+          "The last TLS server observation did not complete a successful handshake");
+    }
+    return report.sessionSummary();
   }
 
   /**

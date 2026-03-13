@@ -211,6 +211,43 @@ When comparing values (e.g. in the `TGR current response body matches:`) general
 // /src/test/java/de/gematik/test/tiger/glue/RBelValidatorGlue.java
 include::./RBelValidatorGlueCommentsOnly.adoc[]
 
+[#_using_the_tls_test_steps]
+=== Using the TLS test steps
+
+Tiger provides dedicated TGR steps for active TLS testing and for observing TLS clients.
+These steps build on the `tiger-tls-tests` module and cover four main workflows:
+
+* running built-in TLS profiles against a TLS server
+* scanning support for protocols, cipher suites, ALPN protocols, named groups, and signature schemes
+* probing deeper TLS behavior such as renegotiation, session resumption, OCSP stapling, or fallback-SCSV handling
+* starting a one-shot TLS server in Tiger and observing what a DUT client negotiates
+
+The TLS steps follow the same stateful style as the other TGR integrations:
+
+* use `TGR reset TLS test configuration` before client-side probes to start from a known configuration
+* use `TGR reset TLS server observation configuration` before Tiger should act as the TLS server
+* use the `store ... in local variable ...` steps to persist structured JSON reports as evidence for later assertions or report attachments
+* use the `... OpenSSL command matches ...` assertions to confirm that reproducible command-line evidence is present
+
+The underlying reports carry best-effort OpenSSL reproduction commands together with execution notes and probe logs.
+This is intended to support manual re-checks after a failed scenario and to make the TLS evidence easier to attach to reports.
+
+.Tiger TLS steps example
+[source,gherkin]
+--
+include::tls-tests-example.feature[]
+--
+
+For server-side observation runs Tiger exposes itself as a local TLS server, waits for exactly one client connection, and records:
+
+* negotiated protocol and cipher suite
+* negotiated ALPN application protocol, if present
+* requested SNI server names, if present
+* presented client certificate subjects, if present
+* the remote client socket address
+
+This makes it practical to validate TLS behavior for both DUT servers and DUT clients from TGR without introducing separate tooling.
+
 === Writing your own Glue code
 
 You can define your own BDD steps and write the corresponding glue code in your own project.

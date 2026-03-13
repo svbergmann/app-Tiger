@@ -232,6 +232,47 @@ final class TlsOpenSslEvidenceFactory {
   }
 
   /**
+   * Builds evidence for one server-side TLS observation run.
+   *
+   * @param bindHost local bind host of the observation server
+   * @param port local port of the observation server
+   * @param configuration server-side TLS observation configuration
+   * @return evidence builder populated with reproduction data
+   */
+  TlsProbeEvidenceBuilder forServerObservation(
+      String bindHost, int port, TlsServerConnectionConfiguration configuration) {
+    final TlsProbeEvidenceBuilder builder = new TlsProbeEvidenceBuilder();
+    builder.addReproductionCommand(serverObservationBaseCommand(bindHost, port, configuration));
+    builder.addLogEntry(
+        "OpenSSL reproduction prepared for TLS server observation on " + bindHost + ":" + port);
+    if (configuration.serverIdentity() != null) {
+      builder.addNote(
+          "Tiger server identities use compact PKCS#12 tokens. Reproducing the same server certificate outside Tiger may require PEM conversion.");
+    }
+    if (configuration.requireClientCertificate()) {
+      builder.addNote(
+          "This observation server requires a client certificate trusted by the configured Tiger identity.");
+    }
+    if (!configuration.enabledProtocols().isEmpty()) {
+      builder.addNote(
+          "The observation server restricts protocols to " + configuration.enabledProtocols() + ".");
+    }
+    if (!configuration.enabledCipherSuites().isEmpty()) {
+      builder.addNote(
+          "The observation server restricts cipher suites to "
+              + configuration.enabledCipherSuites()
+              + ".");
+    }
+    if (!configuration.applicationProtocols().isEmpty()) {
+      builder.addNote(
+          "The observation server advertises ALPN application protocols "
+              + configuration.applicationProtocols()
+              + ".");
+    }
+    return builder;
+  }
+
+  /**
    * Creates a builder with configuration translation notes.
    *
    * @param target probed target endpoint
@@ -263,6 +304,32 @@ final class TlsOpenSslEvidenceFactory {
       builder.addNote("The Tiger probe configuration already restricts cipher suites to " + configuration.enabledCipherSuites() + ".");
     }
     return builder;
+  }
+
+  /**
+   * Builds the base OpenSSL command used to connect to one running observation server instance.
+   *
+   * @param bindHost local bind host of the observation server
+   * @param port local port of the observation server
+   * @param configuration server-side TLS observation configuration
+   * @return base OpenSSL command used to reproduce the server-side observation
+   */
+  private String serverObservationBaseCommand(
+      String bindHost, int port, TlsServerConnectionConfiguration configuration) {
+    final StringBuilder commandBuilder =
+        new StringBuilder("openssl s_client -connect '").append(bindHost).append("':").append(port);
+    if (configuration.enabledProtocols().size() == 1) {
+      commandBuilder
+          .append(" ")
+          .append(protocolCommandOption(configuration.enabledProtocols().get(0)));
+    }
+    if (!configuration.applicationProtocols().isEmpty()) {
+      commandBuilder
+          .append(" -alpn '")
+          .append(String.join(",", configuration.applicationProtocols()))
+          .append("'");
+    }
+    return commandBuilder.append(" </dev/null").toString();
   }
 
   /**

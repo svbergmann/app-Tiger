@@ -48,6 +48,13 @@ For more details please check out more Plantuml diagrammes at [specification fol
 
 [For a standalone example see here in our examples section](doc/examples/tigerOnly)
 
+# TLS Compliance Tests
+
+Tiger now includes an in-repository TLS compliance and observation module in [tiger-tls-tests](tiger-tls-tests/README.md).
+Use it when you want to probe TLS servers, run deeper behavior scans, or let Tiger act as a temporary TLS server so you can inspect what a DUT client negotiates.
+
+The TGR-facing usage is documented in the user manual section [Using the TLS test steps](https://gematik.github.io/app-Tiger/Tiger-User-Manual.html#_using_the_tls_test_steps).
+
 # How to use tiger in a testsuite
 
 [Here](https://gematik.github.io/app-Tiger/Tiger-User-Manual.html#_requirements) are the requirements for using the
