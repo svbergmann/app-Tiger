@@ -23,6 +23,8 @@ package de.gematik.test.tiger.common.util;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import de.gematik.test.tiger.common.config.DuplicateMapKeysForbiddenConstructor;
 import de.gematik.test.tiger.common.config.TigerConfigurationException;
 import de.gematik.test.tiger.common.config.TigerConfigurationKey;
@@ -46,7 +48,10 @@ public class TigerSerializationUtil {
   private TigerSerializationUtil() {}
 
   private static final ObjectMapper objMapper =
-      new ObjectMapper().setSerializationInclusion(Include.NON_NULL);
+      new ObjectMapper()
+          .registerModule(new JavaTimeModule())
+          .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+          .setSerializationInclusion(Include.NON_NULL);
 
   public static JSONObject yamlToJsonObject(String yamlStr) {
     Yaml yaml = new Yaml(new DuplicateMapKeysForbiddenConstructor());

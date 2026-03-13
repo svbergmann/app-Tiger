@@ -20,34 +20,37 @@
  */
 package de.gematik.test.tiger.tlstests;
 
+import java.util.List;
+
 /**
- * Holds the outcome of one individual TLS check.
+ * Captures the outcome of probing one TLS feature token such as a protocol version or cipher
+ * suite.
  *
- * @param testCase the executed test case
- * @param verdict the verdict of the check
- * @param details a human-readable result description
- * @param sessionSummary optional handshake summary if a handshake succeeded
- * @param evidence reproducible execution evidence for this TLS check
+ * @param feature the scanned feature token
+ * @param verdict outcome of probing the feature
+ * @param details human-readable execution details
+ * @param sessionSummary negotiated session summary when the probe succeeded
+ * @param evidence reproducible execution evidence for the probe
  */
-public record TlsTestResult(
-    TlsTestCase testCase,
+public record TlsFeatureSupportResult(
+    String feature,
     TlsTestVerdict verdict,
     String details,
     TlsSessionSummary sessionSummary,
     TlsProbeEvidence evidence) {
 
   /**
-   * Creates a validated test result.
+   * Creates a validated feature probe result.
    *
-   * @param testCase the executed test case
-   * @param verdict the verdict of the check
-   * @param details a human-readable result description
-   * @param sessionSummary optional handshake summary if a handshake succeeded
-   * @param evidence reproducible execution evidence for this TLS check
+   * @param feature the scanned feature token
+   * @param verdict outcome of probing the feature
+   * @param details human-readable execution details
+   * @param sessionSummary negotiated session summary when the probe succeeded
+   * @param evidence reproducible execution evidence for the probe
    */
-  public TlsTestResult {
-    if (testCase == null) {
-      throw new IllegalArgumentException("testCase must not be null");
+  public TlsFeatureSupportResult {
+    if (feature == null || feature.isBlank()) {
+      throw new IllegalArgumentException("feature must not be blank");
     }
     if (verdict == null) {
       throw new IllegalArgumentException("verdict must not be null");

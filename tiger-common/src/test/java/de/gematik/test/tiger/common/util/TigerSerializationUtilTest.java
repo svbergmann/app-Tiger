@@ -26,12 +26,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.gematik.test.tiger.common.config.TigerConfigurationTest.DummyBean;
 import de.gematik.test.tiger.common.config.TigerConfigurationTest.NestedBean;
+import java.time.Instant;
 import java.util.Map;
 import lombok.val;
 import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 class TigerSerializationUtilTest {
+
+  private record BeanWithInstant(Instant executedAt) {}
 
   @Test
   void yamlToJsonObjectNestedTest() {
@@ -88,6 +91,12 @@ class TigerSerializationUtilTest {
         .containsEntry("dummy.string", "stringValue")
         .containsEntry("dummy.nestedbean.foo", "nestedFoo")
         .containsEntry("dummy.nestedbean.inner.foo", "nestedInnerFoo");
+  }
+
+  @Test
+  void toJsonSupportsJavaTimeTypes() {
+    assertThat(TigerSerializationUtil.toJson(new BeanWithInstant(Instant.parse("2026-03-12T17:00:00Z"))))
+        .contains("\"executedAt\" : \"2026-03-12T17:00:00Z\"");
   }
 
   @Test

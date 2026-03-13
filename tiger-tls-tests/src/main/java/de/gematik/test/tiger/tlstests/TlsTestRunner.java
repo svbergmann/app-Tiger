@@ -20,13 +20,6 @@
  */
 package de.gematik.test.tiger.tlstests;
 
-import de.gematik.test.tiger.common.pki.TigerConfigurationPkiIdentity;
-import de.gematik.test.tiger.common.pki.TigerPkiIdentity;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.security.KeyStore;
-import java.security.SecureRandom;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,21 +27,35 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SNIHostName;
 import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 
 /** Executes a small set of active TLS checks against a configured target endpoint. */
 public class TlsTestRunner {
 
-  private static final String IN_MEMORY_KEYSTORE_PASSWORD = "changeit";
+  private final TlsClientProbeSupport tlsClientProbeSupport;
+  private final TlsOpenSslEvidenceFactory tlsOpenSslEvidenceFactory;
+
+  /**
+   * Creates a TLS test runner backed by the default TLS client probe helper.
+   */
+  public TlsTestRunner() {
+    this(new TlsClientProbeSupport(), new TlsOpenSslEvidenceFactory());
+  }
+
+  /**
+   * Creates a TLS test runner with an injectable probe helper.
+   *
+   * @param tlsClientProbeSupport low-level TLS client probe helper
+   * @param tlsOpenSslEvidenceFactory factory for OpenSSL reproduction evidence
+   */
+  TlsTestRunner(
+      TlsClientProbeSupport tlsClientProbeSupport,
+      TlsOpenSslEvidenceFactory tlsOpenSslEvidenceFactory) {
+    this.tlsClientProbeSupport = tlsClientProbeSupport;
+    this.tlsOpenSslEvidenceFactory = tlsOpenSslEvidenceFactory;
+  }
 
   /**
    * Executes all checks in the requested profile and returns the aggregated report.
@@ -67,129 +74,188 @@ public class TlsTestRunner {
     return new TlsTestReport(request.target(), request.profile(), Instant.now(), results);
   }
 
+  /**
+   * Executes one concrete TLS test case while reusing cached handshake probes where possible.
+   *
+   * @param testCase test case to execute
+   * @param request TLS test request
+   * @param probeCache cache of previously executed handshake probes
+   * @return one test result
+   */
   private TlsTestResult execute(
       TlsTestCase testCase, TlsTestRequest request, Map<HandshakeKey, ProbeResult> probeCache) {
+    final TlsProbeEvidenceBuilder evidence =
+        tlsOpenSslEvidenceFactory.forProfileTestCase(
+            request.target(), request.connectionConfiguration(), testCase);
     return switch (testCase) {
-      case HANDSHAKE -> buildHandshakeResult(getProbeResult(request, probeCache, null), testCase);
+      case HANDSHAKE ->
+          buildHandshakeResult(getProbeResult(request, probeCache, null), testCase, evidence);
       case SUPPORTS_TLS_1_2 ->
           buildHandshakeResult(
-              getProbeResult(request, probeCache, new String[] {"TLSv1.2"}), testCase);
+              getProbeResult(request, probeCache, new String[] {"TLSv1.2"}), testCase, evidence);
       case SUPPORTS_TLS_1_3 ->
           buildHandshakeResult(
-              getProbeResult(request, probeCache, new String[] {"TLSv1.3"}), testCase);
+              getProbeResult(request, probeCache, new String[] {"TLSv1.3"}), testCase, evidence);
       case PRESENTS_CERTIFICATE ->
-          buildCertificatePresenceResult(getProbeResult(request, probeCache, null));
+          buildCertificatePresenceResult(getProbeResult(request, probeCache, null), evidence);
       case CERTIFICATE_CURRENTLY_VALID ->
-          buildCertificateValidityResult(getProbeResult(request, probeCache, null));
+          buildCertificateValidityResult(getProbeResult(request, probeCache, null), evidence);
     };
   }
 
+  /**
+   * Returns one cached or newly executed handshake probe result.
+   *
+   * @param request TLS test request
+   * @param probeCache cache of previously executed handshake probes
+   * @param enabledProtocols protocol override for this probe, or {@code null}
+   * @return handshake probe result
+   */
   private ProbeResult getProbeResult(
       TlsTestRequest request, Map<HandshakeKey, ProbeResult> probeCache, String[] enabledProtocols) {
     final HandshakeKey key = new HandshakeKey(request, enabledProtocols);
     return probeCache.computeIfAbsent(key, ignored -> probe(request, enabledProtocols));
   }
 
+  /**
+   * Executes one concrete TLS handshake probe.
+   *
+   * @param request TLS test request
+   * @param enabledProtocols protocol override for this probe, or {@code null}
+   * @return handshake probe result
+   */
   private ProbeResult probe(TlsTestRequest request, String[] enabledProtocols) {
     try {
-      final SSLContext sslContext = buildSslContext(request.connectionConfiguration());
-      try (SSLSocket socket = (SSLSocket) sslContext.getSocketFactory().createSocket()) {
-        final int timeoutMillis = (int) request.connectionConfiguration().timeout().toMillis();
-        socket.setSoTimeout(timeoutMillis);
-        socket.connect(
-            new InetSocketAddress(request.target().host(), request.target().port()), timeoutMillis);
-
-        final SSLParameters sslParameters = socket.getSSLParameters();
-        if (enabledProtocols != null) {
-          sslParameters.setProtocols(enabledProtocols);
-        }
-        if (request.connectionConfiguration().hostnameVerification()) {
-          sslParameters.setEndpointIdentificationAlgorithm("HTTPS");
-        }
-        if (!request.target().effectiveSniHostName().isBlank()
-            && !isIpAddress(request.target().effectiveSniHostName())) {
-          sslParameters.setServerNames(
-              List.of(new SNIHostName(request.target().effectiveSniHostName())));
-        }
-        socket.setSSLParameters(sslParameters);
-
+      final SSLContext sslContext =
+          tlsClientProbeSupport.buildSslContext(request.connectionConfiguration());
+      try (SSLSocket socket =
+          tlsClientProbeSupport.openSocket(
+              sslContext,
+              request.target(),
+              request.connectionConfiguration(),
+              enabledProtocols,
+              null)) {
         socket.startHandshake();
 
         final SSLSession session = socket.getSession();
-        final List<X509Certificate> peerCertificates = extractPeerCertificates(session);
+        final List<X509Certificate> peerCertificates =
+            tlsClientProbeSupport.extractPeerCertificates(session);
         return ProbeResult.success(
-            new TlsSessionSummary(
-                session.getProtocol(),
-                session.getCipherSuite(),
-                peerCertificates.stream()
-                    .map(cert -> cert.getSubjectX500Principal().getName())
-                    .toList()),
+            tlsClientProbeSupport.buildSessionSummary(session),
             peerCertificates);
       }
     } catch (Exception e) {
-      return ProbeResult.failure(extractRootCauseMessage(e));
+      return ProbeResult.failure(tlsClientProbeSupport.extractRootCauseMessage(e));
     }
   }
 
-  private TlsTestResult buildHandshakeResult(ProbeResult probeResult, TlsTestCase testCase) {
+  /**
+   * Translates one handshake probe into the generic handshake-style TLS test result.
+   *
+   * @param probeResult handshake probe result
+   * @param testCase executed test case
+   * @return translated test result
+   */
+  private TlsTestResult buildHandshakeResult(
+      ProbeResult probeResult, TlsTestCase testCase, TlsProbeEvidenceBuilder evidence) {
     if (!probeResult.successful()) {
+      evidence.addLogEntry(
+          "Handshake failed for " + testCase + ": " + probeResult.failureMessage());
       return new TlsTestResult(
           testCase,
           TlsTestVerdict.FAILED,
           "Handshake failed: " + probeResult.failureMessage(),
-          null);
+          null,
+          evidence.build());
     }
 
     final TlsSessionSummary summary = probeResult.sessionSummary();
+    evidence.addLogEntry(
+        "Handshake succeeded for "
+            + testCase
+            + " with "
+            + summary.negotiatedProtocol()
+            + " / "
+            + summary.negotiatedCipherSuite());
     return new TlsTestResult(
         testCase,
         TlsTestVerdict.PASSED,
         "Handshake succeeded with %s and %s"
             .formatted(summary.negotiatedProtocol(), summary.negotiatedCipherSuite()),
-        summary);
+        summary,
+        evidence.build());
   }
 
-  private TlsTestResult buildCertificatePresenceResult(ProbeResult probeResult) {
+  /**
+   * Builds the certificate-presence result from a previously executed handshake probe.
+   *
+   * @param probeResult handshake probe result
+   * @return certificate-presence test result
+   */
+  private TlsTestResult buildCertificatePresenceResult(
+      ProbeResult probeResult, TlsProbeEvidenceBuilder evidence) {
     if (!probeResult.successful()) {
+      evidence.addLogEntry(
+          "Certificate-presence check skipped because the handshake failed: "
+              + probeResult.failureMessage());
       return new TlsTestResult(
           TlsTestCase.PRESENTS_CERTIFICATE,
           TlsTestVerdict.FAILED,
           "Could not inspect certificates because the handshake failed: "
               + probeResult.failureMessage(),
-          null);
+          null,
+          evidence.build());
     }
 
     if (probeResult.peerCertificates().isEmpty()) {
+      evidence.addLogEntry("Handshake completed without any peer certificates");
       return new TlsTestResult(
           TlsTestCase.PRESENTS_CERTIFICATE,
           TlsTestVerdict.FAILED,
           "Handshake succeeded but the peer did not present any certificate",
-          probeResult.sessionSummary());
+          probeResult.sessionSummary(),
+          evidence.build());
     }
 
+    evidence.addLogEntry(
+        "Peer presented " + probeResult.peerCertificates().size() + " certificate(s)");
     return new TlsTestResult(
         TlsTestCase.PRESENTS_CERTIFICATE,
         TlsTestVerdict.PASSED,
         "Peer presented %d certificate(s)".formatted(probeResult.peerCertificates().size()),
-        probeResult.sessionSummary());
+        probeResult.sessionSummary(),
+        evidence.build());
   }
 
-  private TlsTestResult buildCertificateValidityResult(ProbeResult probeResult) {
+  /**
+   * Builds the certificate-validity result from a previously executed handshake probe.
+   *
+   * @param probeResult handshake probe result
+   * @return certificate-validity test result
+   */
+  private TlsTestResult buildCertificateValidityResult(
+      ProbeResult probeResult, TlsProbeEvidenceBuilder evidence) {
     if (!probeResult.successful()) {
+      evidence.addLogEntry(
+          "Certificate-validity check skipped because the handshake failed: "
+              + probeResult.failureMessage());
       return new TlsTestResult(
           TlsTestCase.CERTIFICATE_CURRENTLY_VALID,
           TlsTestVerdict.FAILED,
           "Could not validate certificate dates because the handshake failed: "
               + probeResult.failureMessage(),
-          null);
+          null,
+          evidence.build());
     }
 
     if (probeResult.peerCertificates().isEmpty()) {
+      evidence.addLogEntry("No peer certificate was available for date validation");
       return new TlsTestResult(
           TlsTestCase.CERTIFICATE_CURRENTLY_VALID,
           TlsTestVerdict.FAILED,
           "Handshake succeeded but no peer certificate was available for validity checks",
-          probeResult.sessionSummary());
+          probeResult.sessionSummary(),
+          evidence.build());
     }
 
     try {
@@ -197,125 +263,88 @@ public class TlsTestRunner {
       for (X509Certificate certificate : probeResult.peerCertificates()) {
         certificate.checkValidity(now);
       }
+      evidence.addLogEntry("All peer certificates were valid at " + now.toInstant());
       return new TlsTestResult(
           TlsTestCase.CERTIFICATE_CURRENTLY_VALID,
           TlsTestVerdict.PASSED,
           "All presented certificates are currently valid",
-          probeResult.sessionSummary());
+          probeResult.sessionSummary(),
+          evidence.build());
     } catch (Exception e) {
+      evidence.addLogEntry(
+          "Certificate-validity check failed with " + extractRootCauseMessage(e));
       return new TlsTestResult(
           TlsTestCase.CERTIFICATE_CURRENTLY_VALID,
           TlsTestVerdict.FAILED,
           "Certificate validity check failed: " + extractRootCauseMessage(e),
-          probeResult.sessionSummary());
+          probeResult.sessionSummary(),
+          evidence.build());
     }
   }
 
-  private SSLContext buildSslContext(TlsConnectionConfiguration configuration) throws Exception {
-    final SSLContext sslContext = SSLContext.getInstance("TLS");
-    sslContext.init(
-        buildKeyManagers(configuration.clientIdentity()),
-        buildTrustManagers(configuration),
-        new SecureRandom());
-    return sslContext;
-  }
-
-  private KeyManager[] buildKeyManagers(TigerConfigurationPkiIdentity clientIdentity)
-      throws Exception {
-    if (clientIdentity == null) {
-      return null;
-    }
-
-    final TigerPkiIdentity identity =
-        new TigerPkiIdentity(clientIdentity.getFileLoadingInformation());
-    final KeyStore keyStore = identity.toKeyStoreWithPassword(IN_MEMORY_KEYSTORE_PASSWORD);
-    final KeyManagerFactory keyManagerFactory =
-        KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-    keyManagerFactory.init(keyStore, IN_MEMORY_KEYSTORE_PASSWORD.toCharArray());
-    return keyManagerFactory.getKeyManagers();
-  }
-
-  private TrustManager[] buildTrustManagers(TlsConnectionConfiguration configuration)
-      throws Exception {
-    if (configuration.trustAllCertificates()) {
-      return new TrustManager[] {new TrustAllX509TrustManager()};
-    }
-
-    if (configuration.trustStoreIdentity() != null) {
-      final TigerPkiIdentity trustIdentity =
-          new TigerPkiIdentity(configuration.trustStoreIdentity().getFileLoadingInformation());
-      final KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
-      trustStore.load(null, null);
-      int entryCounter = 0;
-      for (Certificate certificate : trustIdentity.buildChainWithCertificate()) {
-        trustStore.setCertificateEntry("trusted-%d".formatted(entryCounter++), certificate);
-      }
-      final TrustManagerFactory trustManagerFactory =
-          TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-      trustManagerFactory.init(trustStore);
-      return trustManagerFactory.getTrustManagers();
-    }
-
-    return null;
-  }
-
-  private List<X509Certificate> extractPeerCertificates(SSLSession session) throws Exception {
-    final List<X509Certificate> certificates = new ArrayList<>();
-    for (Certificate certificate : session.getPeerCertificates()) {
-      certificates.add((X509Certificate) certificate);
-    }
-    return certificates;
-  }
-
-  private boolean isIpAddress(String hostname) {
-    try {
-      return hostname.equals(InetAddress.getByName(hostname).getHostAddress());
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
+  /**
+   * Extracts the root-cause message from an exception hierarchy.
+   *
+   * @param throwable original exception
+   * @return root-cause message or class name
+   */
   private String extractRootCauseMessage(Throwable throwable) {
-    Throwable current = throwable;
-    while (current.getCause() != null) {
-      current = current.getCause();
-    }
-    return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
+    return tlsClientProbeSupport.extractRootCauseMessage(throwable);
   }
 
+  /**
+   * Cache key for handshake probe reuse across test cases within one report execution.
+   *
+   * @param request original TLS test request
+   * @param enabledProtocols effective protocol override applied to the probe
+   */
   private record HandshakeKey(TlsTestRequest request, List<String> enabledProtocols) {
+
+    /**
+     * Creates a cache key from an optional protocol override array.
+     *
+     * @param request original TLS test request
+     * @param enabledProtocols protocol override array, or {@code null}
+     */
     private HandshakeKey(TlsTestRequest request, String[] enabledProtocols) {
       this(request, enabledProtocols == null ? List.of() : List.of(enabledProtocols));
     }
   }
 
+  /**
+   * Internal raw handshake probe result reused by multiple higher-level test cases.
+   *
+   * @param successful whether the handshake succeeded
+   * @param failureMessage root-cause failure message for failed probes
+   * @param sessionSummary negotiated session summary for successful probes
+   * @param peerCertificates extracted peer certificate chain for successful probes
+   */
   private record ProbeResult(
       boolean successful,
       String failureMessage,
       TlsSessionSummary sessionSummary,
       List<X509Certificate> peerCertificates) {
 
+    /**
+     * Creates a successful raw probe result.
+     *
+     * @param sessionSummary negotiated session summary
+     * @param peerCertificates extracted peer certificate chain
+     * @return successful raw probe result
+     */
     private static ProbeResult success(
         TlsSessionSummary sessionSummary, List<X509Certificate> peerCertificates) {
       return new ProbeResult(true, null, sessionSummary, List.copyOf(peerCertificates));
     }
 
+    /**
+     * Creates a failed raw probe result.
+     *
+     * @param failureMessage root-cause failure message
+     * @return failed raw probe result
+     */
     private static ProbeResult failure(String failureMessage) {
       return new ProbeResult(false, failureMessage, null, List.of());
-    }
-  }
-
-  private static final class TrustAllX509TrustManager implements X509TrustManager {
-
-    @Override
-    public void checkClientTrusted(X509Certificate[] chain, String authType) {}
-
-    @Override
-    public void checkServerTrusted(X509Certificate[] chain, String authType) {}
-
-    @Override
-    public X509Certificate[] getAcceptedIssuers() {
-      return new X509Certificate[0];
     }
   }
 }
