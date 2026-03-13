@@ -57,6 +57,7 @@ public class TigerTlsTestsGlue {
   private TlsTestReport lastTlsTestReport;
   private TlsFeatureSupportReport lastTlsProtocolScanReport;
   private TlsFeatureSupportReport lastTlsCipherSuiteScanReport;
+  private TlsFeatureSupportReport lastTlsApplicationProtocolScanReport;
   private TlsFeatureSupportReport lastTlsNamedGroupScanReport;
   private TlsFeatureSupportReport lastTlsSignatureSchemeScanReport;
   private TlsBehaviorProbeReport lastTlsBehaviorProbeReport;
@@ -346,6 +347,25 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Scans a list of ALPN application protocols against one target endpoint.
+   *
+   * @param applicationProtocolTokens comma-separated application-protocol list
+   * @param host target host name or IP address
+   * @param port target TCP port
+   */
+  @Wenn("TGR scanne TLS Application Protocols {tigerResolvedString} gegen Host {tigerResolvedString} auf Port {int}")
+  @When(
+      "TGR scan TLS application protocols {tigerResolvedString} against host {tigerResolvedString} on port {int}")
+  public void runTlsApplicationProtocolScan(
+      String applicationProtocolTokens, String host, int port) {
+    lastTlsApplicationProtocolScanReport =
+        tlsComplianceRunner.scanApplicationProtocols(
+            buildTarget(host, port),
+            parseTokenList(applicationProtocolTokens, "TLS application protocols"),
+            tlsConnectionConfiguration);
+  }
+
+  /**
    * Scans a list of TLS named groups against one target endpoint.
    *
    * @param namedGroupTokens comma-separated named-group list
@@ -435,6 +455,20 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Executes the TLS 1.2 encrypt-then-mac probe against one target endpoint.
+   *
+   * @param host target host name or IP address
+   * @param port target TCP port
+   */
+  @Wenn("TGR führe TLS 1.2 Encrypt-Then-Mac-Probe gegen Host {tigerResolvedString} auf Port {int} aus")
+  @When("TGR run TLS 1.2 encrypt then mac probe against host {tigerResolvedString} on port {int}")
+  public void runTls12EncryptThenMacProbe(String host, int port) {
+    lastTlsBehaviorProbeReport =
+        tlsComplianceRunner.probeTls12EncryptThenMacSupport(
+            buildTarget(host, port), tlsConnectionConfiguration);
+  }
+
+  /**
    * Executes the TLS 1.2 fallback-SCSV rejection probe against one target endpoint.
    *
    * @param host target host name or IP address
@@ -514,6 +548,20 @@ public class TigerTlsTestsGlue {
     TigerGlobalConfiguration.putValue(
         variableName,
         TigerSerializationUtil.toJson(currentCipherSuiteScanReport()),
+        ConfigurationValuePrecedence.LOCAL_TEST_CASE_CONTEXT);
+  }
+
+  /**
+   * Stores the last TLS application-protocol scan report as JSON in a local Tiger variable.
+   *
+   * @param variableName local variable receiving the JSON report
+   */
+  @Wenn("TGR speichere letzten TLS-Application-Protocol-Scan in lokaler Variable {tigerResolvedString}")
+  @When("TGR store last TLS application protocol scan in local variable {tigerResolvedString}")
+  public void storeLastTlsApplicationProtocolScan(String variableName) {
+    TigerGlobalConfiguration.putValue(
+        variableName,
+        TigerSerializationUtil.toJson(currentApplicationProtocolScanReport()),
         ConfigurationValuePrecedence.LOCAL_TEST_CASE_CONTEXT);
   }
 
@@ -700,6 +748,40 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Executes an application-protocol scan and asserts that the peer accepts the specified ALPN
+   * application protocol.
+   *
+   * @param host target host name or IP address
+   * @param port target TCP port
+   * @param applicationProtocol expected ALPN application protocol accepted by the peer
+   */
+  @Dann("TGR prüfe Host {tigerResolvedString} auf Port {int} akzeptiert TLS Application Protocol {tigerResolvedString}")
+  @Then(
+      "TGR assert host {tigerResolvedString} on port {int} accepts TLS application protocol {tigerResolvedString}")
+  public void assertTlsApplicationProtocolAccepted(
+      String host, int port, String applicationProtocol) {
+    runTlsApplicationProtocolScan(applicationProtocol, host, port);
+    assertLastTlsApplicationProtocolScanAccepts(applicationProtocol);
+  }
+
+  /**
+   * Executes an application-protocol scan and asserts that the peer rejects the specified ALPN
+   * application protocol.
+   *
+   * @param host target host name or IP address
+   * @param port target TCP port
+   * @param applicationProtocol expected ALPN application protocol rejected by the peer
+   */
+  @Dann("TGR prüfe Host {tigerResolvedString} auf Port {int} lehnt TLS Application Protocol {tigerResolvedString} ab")
+  @Then(
+      "TGR assert host {tigerResolvedString} on port {int} rejects TLS application protocol {tigerResolvedString}")
+  public void assertTlsApplicationProtocolRejected(
+      String host, int port, String applicationProtocol) {
+    runTlsApplicationProtocolScan(applicationProtocol, host, port);
+    assertLastTlsApplicationProtocolScanRejects(applicationProtocol);
+  }
+
+  /**
    * Executes a named-group scan and asserts that the peer accepts the specified named group.
    *
    * @param host target host name or IP address
@@ -838,6 +920,49 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Asserts that the last application-protocol scan accepted one specific ALPN application
+   * protocol.
+   *
+   * @param applicationProtocol expected accepted ALPN application protocol
+   */
+  @Dann("TGR prüfe letzter TLS-Application-Protocol-Scan akzeptiert {tigerResolvedString}")
+  @Then("TGR assert last TLS application protocol scan accepts {tigerResolvedString}")
+  public void assertLastTlsApplicationProtocolScanAccepts(String applicationProtocol) {
+    assertThat(currentApplicationProtocolScanResult(applicationProtocol))
+        .extracting(TlsFeatureSupportResult::verdict)
+        .isEqualTo(TlsTestVerdict.PASSED);
+  }
+
+  /**
+   * Asserts that the last application-protocol scan rejected one specific ALPN application
+   * protocol.
+   *
+   * @param applicationProtocol expected rejected ALPN application protocol
+   */
+  @Dann("TGR prüfe letzter TLS-Application-Protocol-Scan lehnt {tigerResolvedString} ab")
+  @Then("TGR assert last TLS application protocol scan rejects {tigerResolvedString}")
+  public void assertLastTlsApplicationProtocolScanRejects(String applicationProtocol) {
+    assertThat(currentApplicationProtocolScanResult(applicationProtocol))
+        .extracting(TlsFeatureSupportResult::verdict)
+        .isEqualTo(TlsTestVerdict.FAILED);
+  }
+
+  /**
+   * Asserts the full accepted application-protocol list of the last application-protocol scan.
+   *
+   * @param applicationProtocolTokens expected comma-separated accepted application-protocol list
+   */
+  @Dann("TGR prüfe letzter TLS-Application-Protocol-Scan akzeptierte Application Protocols sind {tigerResolvedString}")
+  @Then(
+      "TGR assert last TLS application protocol scan accepted application protocols equal {tigerResolvedString}")
+  public void assertLastTlsApplicationProtocolScanAcceptedProtocols(
+      String applicationProtocolTokens) {
+    assertThat(currentApplicationProtocolScanReport().supportedFeatures())
+        .containsExactlyElementsOf(
+            parseTokenList(applicationProtocolTokens, "TLS application protocols"));
+  }
+
+  /**
    * Asserts that the last named-group scan accepted one specific named group.
    *
    * @param namedGroup expected accepted named group
@@ -946,6 +1071,24 @@ public class TigerTlsTestsGlue {
   @Then("TGR assert TLS cipher suite scan for {tigerResolvedString} OpenSSL command matches {tigerResolvedString}")
   public void assertTlsCipherSuiteScanOpenSslCommandMatches(String cipherSuite, String regex) {
     assertThat(currentCipherSuiteScanResult(cipherSuite).evidence().primaryReproductionCommand())
+        .hasValueSatisfying(command -> assertThat(command).matches(regex));
+  }
+
+  /**
+   * Asserts the primary reproduction command for one application-protocol scan result.
+   *
+   * @param applicationProtocol scanned ALPN application-protocol token
+   * @param regex expected regular expression for the primary reproduction command
+   */
+  @Dann("TGR prüfe TLS-Application-Protocol-Scan für {tigerResolvedString} OpenSSL-Kommando stimmt überein mit {tigerResolvedString}")
+  @Then(
+      "TGR assert TLS application protocol scan for {tigerResolvedString} OpenSSL command matches {tigerResolvedString}")
+  public void assertTlsApplicationProtocolScanOpenSslCommandMatches(
+      String applicationProtocol, String regex) {
+    assertThat(
+            currentApplicationProtocolScanResult(applicationProtocol)
+                .evidence()
+                .primaryReproductionCommand())
         .hasValueSatisfying(command -> assertThat(command).matches(regex));
   }
 
@@ -1087,6 +1230,34 @@ public class TigerTlsTestsGlue {
   }
 
   /**
+   * Executes the encrypt-then-mac probe and asserts that the target negotiates the extension.
+   *
+   * @param host target host name or IP address
+   * @param port target TCP port
+   */
+  @Dann("TGR prüfe Host {tigerResolvedString} auf Port {int} unterstützt TLS 1.2 Encrypt Then Mac")
+  @Then("TGR assert host {tigerResolvedString} on port {int} supports TLS 1.2 encrypt then mac")
+  public void assertTls12EncryptThenMacSupported(String host, int port) {
+    runTls12EncryptThenMacProbe(host, port);
+    assertLastTlsBehaviorProbeVerdict(TlsTestVerdict.PASSED.name());
+  }
+
+  /**
+   * Executes the encrypt-then-mac probe and asserts that the target does not negotiate the
+   * extension.
+   *
+   * @param host target host name or IP address
+   * @param port target TCP port
+   */
+  @Dann("TGR prüfe Host {tigerResolvedString} auf Port {int} unterstützt kein TLS 1.2 Encrypt Then Mac")
+  @Then(
+      "TGR assert host {tigerResolvedString} on port {int} does not support TLS 1.2 encrypt then mac")
+  public void assertTls12EncryptThenMacRejected(String host, int port) {
+    runTls12EncryptThenMacProbe(host, port);
+    assertLastTlsBehaviorProbeVerdict(TlsTestVerdict.FAILED.name());
+  }
+
+  /**
    * Executes the fallback-SCSV probe and asserts that the target rejects the fallback handshake.
    *
    * @param host target host name or IP address
@@ -1215,6 +1386,19 @@ public class TigerTlsTestsGlue {
           "No TLS cipher suite scan report available yet. Run a TLS cipher suite scan first.");
     }
     return lastTlsCipherSuiteScanReport;
+  }
+
+  /**
+   * Returns the last executed TLS application-protocol scan report.
+   *
+   * @return current TLS application-protocol scan report
+   */
+  private TlsFeatureSupportReport currentApplicationProtocolScanReport() {
+    if (lastTlsApplicationProtocolScanReport == null) {
+      throw new TigerTlsTestsGlueException(
+          "No TLS application protocol scan report available yet. Run a TLS application protocol scan first.");
+    }
+    return lastTlsApplicationProtocolScanReport;
   }
 
   /**
@@ -1409,6 +1593,22 @@ public class TigerTlsTestsGlue {
             () ->
                 new TigerTlsTestsGlueException(
                     "No TLS cipher-suite scan result available for " + cipherSuite));
+  }
+
+  /**
+   * Resolves one result from the last TLS application-protocol scan.
+   *
+   * @param applicationProtocol application-protocol token to resolve
+   * @return matching application-protocol scan result
+   */
+  private TlsFeatureSupportResult currentApplicationProtocolScanResult(String applicationProtocol) {
+    return currentApplicationProtocolScanReport()
+        .findResult(parseSingleToken(applicationProtocol, "TLS application protocol"))
+        .orElseThrow(
+            () ->
+                new TigerTlsTestsGlueException(
+                    "No TLS application-protocol scan result available for "
+                        + applicationProtocol));
   }
 
   /**

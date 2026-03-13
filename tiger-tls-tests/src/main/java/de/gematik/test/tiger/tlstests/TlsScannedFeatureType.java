@@ -28,6 +28,8 @@ public enum TlsScannedFeatureType {
   PROTOCOL,
   /** TLS cipher-suite scan results. */
   CIPHER_SUITE,
+  /** ALPN application-protocol scan results. */
+  APPLICATION_PROTOCOL,
   /** TLS named-group scan results. */
   NAMED_GROUP,
   /** TLS signature-scheme scan results. */

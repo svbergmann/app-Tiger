@@ -56,6 +56,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -128,6 +129,31 @@ class TigerTlsComplianceGlueTest {
   }
 
   /**
+   * Verifies that the real ALPN application-protocol glue can scan a local TLS 1.2 server.
+   *
+   * @throws Exception if the test server cannot be started
+   */
+  @Test
+  void shouldRunRealApplicationProtocolScanAgainstTls12Server() throws Exception {
+    final TigerTlsTestsGlue glue = new TigerTlsTestsGlue();
+    try (TlsTestServer server =
+        TlsTestServer.start(new String[] {"TLSv1.2"}, null, new String[] {"h2"})) {
+      assertThatNoException()
+          .isThrownBy(
+              () -> {
+                glue.runTlsApplicationProtocolScan("h2, http/1.1", "127.0.0.1", server.port());
+                glue.assertLastTlsApplicationProtocolScanAccepts("h2");
+                glue.assertLastTlsApplicationProtocolScanRejects("http/1.1");
+                glue.assertLastTlsApplicationProtocolScanAcceptedProtocols("h2");
+                glue.assertTlsApplicationProtocolScanOpenSslCommandMatches("h2", ".*-alpn 'h2'.*");
+                glue.storeLastTlsApplicationProtocolScan("tls.application.protocol.scan");
+              });
+      assertThat(TigerGlobalConfiguration.readStringOptional("tls.application.protocol.scan"))
+          .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
+    }
+  }
+
+  /**
    * Verifies that the real malformed-record and OCSP stapling glue steps work against the local
    * TLS server.
    *
@@ -150,6 +176,30 @@ class TigerTlsComplianceGlueTest {
               });
       assertThat(TigerGlobalConfiguration.readStringOptional("tls.behavior.probe"))
           .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
+    }
+  }
+
+  /**
+   * Verifies that the real encrypt-then-mac glue steps produce structured output on a TLS 1.2 CBC
+   * server.
+   *
+   * @throws Exception if the test server cannot be started
+   */
+  @Test
+  void shouldRunRealEncryptThenMacProbeAgainstTls12CbcServer() throws Exception {
+    final TigerTlsTestsGlue glue = new TigerTlsTestsGlue();
+    try (TlsTestServer server =
+        TlsTestServer.start(
+            new String[] {"TLSv1.2"},
+            new String[] {TlsTestServer.selectSupportedTls12CbcCipherSuite()},
+            null)) {
+      assertThatNoException()
+          .isThrownBy(
+              () -> {
+                glue.runTls12EncryptThenMacProbe("127.0.0.1", server.port());
+                glue.assertLastTlsBehaviorProbeDetailMatches(".*encrypt-then-mac.*");
+                glue.assertLastTlsBehaviorProbeOpenSslCommandMatches(".*openssl ciphers.*");
+              });
     }
   }
 
@@ -180,6 +230,15 @@ class TigerTlsComplianceGlueTest {
                 List.of(
                     new TlsFeatureSupportResult(
                         "x25519", TlsTestVerdict.PASSED, "Handshake succeeded", null, null))));
+    when(complianceRunner.scanApplicationProtocols(any(), any(), any()))
+        .thenReturn(
+            new TlsFeatureSupportReport(
+                new TlsTestTarget("127.0.0.1", 8443, "tls.example.test"),
+                TlsScannedFeatureType.APPLICATION_PROTOCOL,
+                Instant.now(),
+                List.of(
+                    new TlsFeatureSupportResult(
+                        "h2", TlsTestVerdict.PASSED, "ALPN selected h2", null, null))));
     when(complianceRunner.scanSignatureSchemes(any(), any(), any()))
         .thenReturn(
             new TlsFeatureSupportReport(
@@ -215,6 +274,17 @@ class TigerTlsComplianceGlueTest {
                 null,
                 null,
                 null));
+    when(complianceRunner.probeTls12EncryptThenMacSupport(any(), any()))
+        .thenReturn(
+            new TlsBehaviorProbeReport(
+                new TlsTestTarget("127.0.0.1", 8443, "tls.example.test"),
+                TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC,
+                Instant.now(),
+                TlsTestVerdict.PASSED,
+                "Peer negotiated encrypt-then-mac during a TLS 1.2 CBC handshake",
+                null,
+                null,
+                null));
 
     glue.disableTlsTrustAllCertificates();
     glue.enableTlsHostnameVerification();
@@ -222,9 +292,11 @@ class TigerTlsComplianceGlueTest {
     glue.setTlsSniHostName("tls.example.test");
     glue.runTlsProtocolScan("TLSv1.2, TLSv1.3", "127.0.0.1", 8443);
     glue.runTlsNamedGroupScan("x25519", "127.0.0.1", 8443);
+    glue.runTlsApplicationProtocolScan("h2", "127.0.0.1", 8443);
     glue.runTlsSignatureSchemeScan("rsa_pkcs1_sha256", "127.0.0.1", 8443);
     glue.runTls12SessionResumptionProbe("127.0.0.1", 8443);
     glue.runTlsOcspStaplingProbe("127.0.0.1", 8443);
+    glue.runTls12EncryptThenMacProbe("127.0.0.1", 8443);
 
     final ArgumentCaptor<TlsTestTarget> targetCaptor = ArgumentCaptor.forClass(TlsTestTarget.class);
     final ArgumentCaptor<List<String>> protocolsCaptor = ArgumentCaptor.forClass(List.class);
@@ -233,9 +305,11 @@ class TigerTlsComplianceGlueTest {
     verify(complianceRunner)
         .scanProtocols(targetCaptor.capture(), protocolsCaptor.capture(), configurationCaptor.capture());
     verify(complianceRunner).scanNamedGroups(any(), any(), configurationCaptor.capture());
+    verify(complianceRunner).scanApplicationProtocols(any(), any(), configurationCaptor.capture());
     verify(complianceRunner).scanSignatureSchemes(any(), any(), configurationCaptor.capture());
     verify(complianceRunner).probeTls12SessionResumption(any(), configurationCaptor.capture());
     verify(complianceRunner).probeOcspStapling(any(), configurationCaptor.capture());
+    verify(complianceRunner).probeTls12EncryptThenMacSupport(any(), configurationCaptor.capture());
 
     assertThat(targetCaptor.getValue().sniHostName()).isEqualTo("tls.example.test");
     assertThat(protocolsCaptor.getValue()).containsExactly("TLSv1.2", "TLSv1.3");
@@ -332,6 +406,31 @@ class TigerTlsComplianceGlueTest {
                             List.of("openssl s_client -connect '127.0.0.1':8443 -groups 'ffdhe2048' </dev/null"),
                             List.of(),
                             List.of())))));
+    when(complianceRunner.scanApplicationProtocols(any(), any(), any()))
+        .thenReturn(
+            new TlsFeatureSupportReport(
+                new TlsTestTarget("127.0.0.1", 8443),
+                TlsScannedFeatureType.APPLICATION_PROTOCOL,
+                Instant.now(),
+                List.of(
+                    new TlsFeatureSupportResult(
+                        "h2",
+                        TlsTestVerdict.PASSED,
+                        "ALPN selected h2",
+                        null,
+                        new TlsProbeEvidence(
+                            List.of("openssl s_client -connect '127.0.0.1':8443 -alpn 'h2' </dev/null"),
+                            List.of(),
+                            List.of())),
+                    new TlsFeatureSupportResult(
+                        "http/1.1",
+                        TlsTestVerdict.FAILED,
+                        "No ALPN application protocol selected",
+                        null,
+                        new TlsProbeEvidence(
+                            List.of("openssl s_client -connect '127.0.0.1':8443 -alpn 'http/1.1' </dev/null"),
+                            List.of(),
+                            List.of())))));
     when(complianceRunner.scanSignatureSchemes(any(), any(), any()))
         .thenReturn(
             new TlsFeatureSupportReport(
@@ -396,6 +495,22 @@ class TigerTlsComplianceGlueTest {
                     List.of("openssl s_client -connect '127.0.0.1':8443 -status </dev/null"),
                     List.of(),
                     List.of())));
+    when(complianceRunner.probeTls12EncryptThenMacSupport(any(), any()))
+        .thenReturn(
+            new TlsBehaviorProbeReport(
+                new TlsTestTarget("127.0.0.1", 8443),
+                TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC,
+                Instant.now(),
+                TlsTestVerdict.PASSED,
+                "Peer negotiated encrypt-then-mac during a TLS 1.2 CBC handshake",
+                null,
+                null,
+                new TlsProbeEvidence(
+                    List.of(
+                        "openssl ciphers -stdname | grep -E 'TLS_(ECDHE|DHE|RSA)_(RSA|ECDSA)?_?WITH_AES_(128|256)_CBC_SHA(256)?'",
+                        "openssl s_client -connect '127.0.0.1':8443 -tls1_2 -cipher '<OPENSSL_TLS12_CBC_CIPHER_NAME>' -tlsextdebug </dev/null"),
+                    List.of(),
+                    List.of())));
 
     glue.runTlsProtocolScan("TLSv1.2, TLSv1.3", "127.0.0.1", 8443);
     glue.assertLastTlsProtocolScanAccepts("TLSv1.2");
@@ -424,6 +539,15 @@ class TigerTlsComplianceGlueTest {
     glue.assertTlsNamedGroupRejected("127.0.0.1", 8443, "ffdhe2048");
     glue.storeLastTlsNamedGroupScan("tls.named.group.scan.mock");
 
+    glue.runTlsApplicationProtocolScan("h2, http/1.1", "127.0.0.1", 8443);
+    glue.assertLastTlsApplicationProtocolScanAccepts("h2");
+    glue.assertLastTlsApplicationProtocolScanRejects("http/1.1");
+    glue.assertLastTlsApplicationProtocolScanAcceptedProtocols("h2");
+    glue.assertTlsApplicationProtocolScanOpenSslCommandMatches("h2", ".*-alpn 'h2'.*");
+    glue.assertTlsApplicationProtocolAccepted("127.0.0.1", 8443, "h2");
+    glue.assertTlsApplicationProtocolRejected("127.0.0.1", 8443, "http/1.1");
+    glue.storeLastTlsApplicationProtocolScan("tls.application.protocol.scan.mock");
+
     glue.runTlsSignatureSchemeScan(
         "rsa_pkcs1_sha256, ecdsa_secp256r1_sha256", "127.0.0.1", 8443);
     glue.assertLastTlsSignatureSchemeScanAccepts("rsa_pkcs1_sha256");
@@ -446,6 +570,10 @@ class TigerTlsComplianceGlueTest {
     glue.runTlsOcspStaplingProbe("127.0.0.1", 8443);
     glue.assertLastTlsBehaviorProbeVerdict("failed");
     glue.assertTlsOcspStaplingNotSupported("127.0.0.1", 8443);
+
+    glue.runTls12EncryptThenMacProbe("127.0.0.1", 8443);
+    glue.assertLastTlsBehaviorProbeVerdict("passed");
+    glue.assertTls12EncryptThenMacSupported("127.0.0.1", 8443);
     glue.storeLastTlsBehaviorProbe("tls.behavior.mock");
 
     assertThat(TigerGlobalConfiguration.readStringOptional("tls.protocol.scan.mock"))
@@ -453,6 +581,8 @@ class TigerTlsComplianceGlueTest {
     assertThat(TigerGlobalConfiguration.readStringOptional("tls.cipher.scan.mock"))
         .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
     assertThat(TigerGlobalConfiguration.readStringOptional("tls.named.group.scan.mock"))
+        .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
+    assertThat(TigerGlobalConfiguration.readStringOptional("tls.application.protocol.scan.mock"))
         .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
     assertThat(TigerGlobalConfiguration.readStringOptional("tls.signature.scheme.scan.mock"))
         .hasValueSatisfying(json -> assertThat(json).contains("reproductionCommands"));
@@ -468,15 +598,19 @@ class TigerTlsComplianceGlueTest {
     private static final char[] KEYSTORE_PASSWORD = "changeit".toCharArray();
 
     private final SSLServerSocket serverSocket;
+    private final String[] applicationProtocols;
     private final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
     /**
      * Creates a TLS test server fixture.
      *
      * @param serverSocket bound server socket
+     * @param applicationProtocols configured ALPN application protocols
      */
-    private TlsTestServer(SSLServerSocket serverSocket) {
+    private TlsTestServer(SSLServerSocket serverSocket, String[] applicationProtocols) {
       this.serverSocket = serverSocket;
+      this.applicationProtocols =
+          applicationProtocols == null ? null : applicationProtocols.clone();
     }
 
     /**
@@ -487,6 +621,22 @@ class TigerTlsComplianceGlueTest {
      * @throws Exception if the server cannot be created
      */
     static TlsTestServer start(String... enabledProtocols) throws Exception {
+      return start(enabledProtocols, null, null);
+    }
+
+    /**
+     * Starts the TLS test server with the requested enabled protocols, cipher suites, and ALPN
+     * application protocols.
+     *
+     * @param enabledProtocols enabled server protocols
+     * @param enabledCipherSuites enabled server cipher suites
+     * @param applicationProtocols enabled ALPN application protocols
+     * @return started TLS test server
+     * @throws Exception if the server cannot be created
+     */
+    static TlsTestServer start(
+        String[] enabledProtocols, String[] enabledCipherSuites, String[] applicationProtocols)
+        throws Exception {
       final KeyStore keyStore = KeyStore.getInstance("PKCS12");
       keyStore.load(null, null);
 
@@ -507,8 +657,16 @@ class TigerTlsComplianceGlueTest {
       final SSLServerSocket serverSocket =
           (SSLServerSocket) sslContext.getServerSocketFactory().createServerSocket(0);
       serverSocket.setEnabledProtocols(enabledProtocols);
+      if (enabledCipherSuites != null && enabledCipherSuites.length > 0) {
+        serverSocket.setEnabledCipherSuites(enabledCipherSuites);
+      }
+      if (applicationProtocols != null && applicationProtocols.length > 0) {
+        final SSLParameters sslParameters = serverSocket.getSSLParameters();
+        sslParameters.setApplicationProtocols(applicationProtocols.clone());
+        serverSocket.setSSLParameters(sslParameters);
+      }
 
-      final TlsTestServer tlsTestServer = new TlsTestServer(serverSocket);
+      final TlsTestServer tlsTestServer = new TlsTestServer(serverSocket, applicationProtocols);
       tlsTestServer.startAcceptLoop();
       return tlsTestServer;
     }
@@ -531,6 +689,7 @@ class TigerTlsComplianceGlueTest {
             while (!serverSocket.isClosed()) {
               try (SSLSocket socket = (SSLSocket) serverSocket.accept()) {
                 socket.setUseClientMode(false);
+                applySocketConfiguration(socket);
                 socket.startHandshake();
               } catch (SocketException e) {
                 if (!serverSocket.isClosed()) {
@@ -543,6 +702,20 @@ class TigerTlsComplianceGlueTest {
               }
             }
           });
+    }
+
+    /**
+     * Applies per-socket TLS settings before the handshake starts.
+     *
+     * @param socket accepted TLS socket
+     */
+    private void applySocketConfiguration(SSLSocket socket) {
+      if (applicationProtocols == null || applicationProtocols.length == 0) {
+        return;
+      }
+      final SSLParameters sslParameters = socket.getSSLParameters();
+      sslParameters.setApplicationProtocols(applicationProtocols.clone());
+      socket.setSSLParameters(sslParameters);
     }
 
     /**
@@ -570,6 +743,23 @@ class TigerTlsComplianceGlueTest {
       final X509CertificateHolder certificateHolder = certificateBuilder.build(contentSigner);
 
       return new JcaX509CertificateConverter().getCertificate(certificateHolder);
+    }
+
+    /**
+     * Selects one supported TLS 1.2 CBC cipher suite for encrypt-then-mac glue tests.
+     *
+     * @return supported TLS 1.2 CBC cipher suite
+     * @throws Exception if the TLS SSL context cannot be initialized
+     */
+    private static String selectSupportedTls12CbcCipherSuite() throws Exception {
+      final SSLContext sslContext = SSLContext.getInstance("TLS");
+      sslContext.init(null, null, null);
+      return java.util.Arrays.stream(sslContext.getSupportedSSLParameters().getCipherSuites())
+          .filter(cipherSuite -> cipherSuite.startsWith("TLS_"))
+          .filter(cipherSuite -> cipherSuite.contains("_CBC_"))
+          .findFirst()
+          .orElseThrow(
+              () -> new AssertionError("Expected at least one supported TLS 1.2 CBC cipher suite"));
     }
 
     /**

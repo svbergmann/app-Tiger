@@ -92,6 +92,36 @@ class TlsComplianceRunnerTest {
   }
 
   /**
+   * Verifies that ALPN application-protocol scans differentiate selected and unselected tokens.
+   *
+   * @throws Exception if the test fixture cannot be started
+   */
+  @Test
+  void scanApplicationProtocolsShouldDifferentiateAcceptedAndRejectedProtocols()
+      throws Exception {
+    try (TlsTestServer server =
+        TlsTestServer.startWithApplicationProtocols(
+            TlsTestServer.CertificateValidity.VALID,
+            new String[] {"TLSv1.2"},
+            new String[] {"h2"})) {
+      final TlsFeatureSupportReport report =
+          complianceRunner.scanApplicationProtocols(
+              new TlsTestTarget("127.0.0.1", server.port()),
+              List.of("h2", "http/1.1"),
+              TlsConnectionConfiguration.defaults().withEnabledProtocols(List.of("TLSv1.2")));
+
+      assertThat(report.featureType()).isEqualTo(TlsScannedFeatureType.APPLICATION_PROTOCOL);
+      assertThat(report.supportedFeatures()).containsExactly("h2");
+      assertThat(report.rejectedFeatures()).containsExactly("http/1.1");
+      assertThat(report.findResult("h2"))
+          .hasValueSatisfying(
+              result ->
+                  assertThat(result.evidence().primaryReproductionCommand())
+                      .hasValueSatisfying(command -> assertThat(command).contains("-alpn 'h2'")));
+    }
+  }
+
+  /**
    * Verifies that named-group scans report at least one supported classical ECDHE group and reject
    * a finite-field group on an ECDHE-only TLS 1.2 server.
    *
@@ -269,6 +299,32 @@ class TlsComplianceRunnerTest {
   }
 
   /**
+   * Verifies that the encrypt-then-mac probe produces a structured result and reproduction
+   * evidence on a TLS 1.2 CBC server.
+   *
+   * @throws Exception if the test fixture cannot be started
+   */
+  @Test
+  void probeTls12EncryptThenMacShouldProduceStructuredResultOnCbcServer() throws Exception {
+    final String cbcCipherSuite = selectSupportedTls12CbcCipherSuite();
+    try (TlsTestServer server =
+        TlsTestServer.start(
+            TlsTestServer.CertificateValidity.VALID,
+            new String[] {"TLSv1.2"},
+            new String[] {cbcCipherSuite})) {
+      final TlsBehaviorProbeReport report =
+          complianceRunner.probeTls12EncryptThenMacSupport(
+              new TlsTestTarget("127.0.0.1", server.port()),
+              TlsConnectionConfiguration.defaults().withEnabledProtocols(List.of("TLSv1.2")));
+
+      assertThat(report.probeType()).isEqualTo(TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC);
+      assertThat(report.details()).isNotBlank();
+      assertThat(report.evidence().reproductionCommands()).hasSize(2);
+      assertThat(report.evidence().reproductionCommands().get(1)).contains("-tlsextdebug");
+    }
+  }
+
+  /**
    * Verifies that fallback-SCSV rejection is surfaced against a server that supports TLS 1.3 in
    * addition to TLS 1.2.
    *
@@ -427,5 +483,26 @@ class TlsComplianceRunnerTest {
         .orElseThrow(
             () ->
                 new AssertionError("Expected at least one supported TLS 1.2 ECDHE RSA cipher suite"));
+  }
+
+  /**
+   * Selects one supported TLS 1.2 CBC cipher suite for encrypt-then-mac probing.
+   *
+   * @return supported TLS 1.2 CBC cipher suite
+   * @throws NoSuchAlgorithmException if the TLS SSL context cannot be created
+   */
+  private String selectSupportedTls12CbcCipherSuite() throws NoSuchAlgorithmException {
+    final SSLContext sslContext = SSLContext.getInstance("TLS");
+    try {
+      sslContext.init(null, null, null);
+    } catch (Exception e) {
+      throw new IllegalStateException("Unable to initialize SSLContext for cipher-suite discovery", e);
+    }
+    return Arrays.stream(sslContext.getSupportedSSLParameters().getCipherSuites())
+        .filter(cipherSuite -> cipherSuite.startsWith("TLS_"))
+        .filter(cipherSuite -> cipherSuite.contains("_CBC_"))
+        .findFirst()
+        .orElseThrow(
+            () -> new AssertionError("Expected at least one supported TLS 1.2 CBC cipher suite"));
   }
 }

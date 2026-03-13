@@ -39,6 +39,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
@@ -102,6 +103,7 @@ final class TlsTestServer implements AutoCloseable {
   private final SSLServerSocket serverSocket;
   private final GeneratedIdentity serverIdentity;
   private final ConnectionBehavior connectionBehavior;
+  private final String[] applicationProtocols;
   private final ExecutorService executorService = Executors.newSingleThreadExecutor();
 
   /**
@@ -110,14 +112,18 @@ final class TlsTestServer implements AutoCloseable {
    * @param serverSocket bound server socket
    * @param serverIdentity generated server identity
    * @param connectionBehavior accepted-connection handling mode
+   * @param applicationProtocols configured ALPN application protocols
    */
   private TlsTestServer(
       SSLServerSocket serverSocket,
       GeneratedIdentity serverIdentity,
-      ConnectionBehavior connectionBehavior) {
+      ConnectionBehavior connectionBehavior,
+      String[] applicationProtocols) {
     this.serverSocket = serverSocket;
     this.serverIdentity = serverIdentity;
     this.connectionBehavior = connectionBehavior;
+    this.applicationProtocols =
+        applicationProtocols == null ? null : applicationProtocols.clone();
   }
 
   /**
@@ -134,6 +140,7 @@ final class TlsTestServer implements AutoCloseable {
         createIdentity("Tiger TLS Test Server", validity),
         null,
         enabledProtocols,
+        null,
         null,
         ConnectionBehavior.CLOSE_AFTER_HANDSHAKE);
   }
@@ -155,6 +162,28 @@ final class TlsTestServer implements AutoCloseable {
         null,
         enabledProtocols,
         enabledCipherSuites,
+        null,
+        ConnectionBehavior.CLOSE_AFTER_HANDSHAKE);
+  }
+
+  /**
+   * Starts a simple TLS server with ALPN application protocols configured.
+   *
+   * @param validity generated server-certificate validity
+   * @param enabledProtocols enabled server protocols
+   * @param applicationProtocols enabled ALPN application protocols
+   * @return started TLS test server
+   * @throws Exception if the server cannot be started
+   */
+  static TlsTestServer startWithApplicationProtocols(
+      CertificateValidity validity, String[] enabledProtocols, String[] applicationProtocols)
+      throws Exception {
+    return startInternal(
+        createIdentity("Tiger TLS Test Server", validity),
+        null,
+        enabledProtocols,
+        null,
+        applicationProtocols,
         ConnectionBehavior.CLOSE_AFTER_HANDSHAKE);
   }
 
@@ -172,6 +201,7 @@ final class TlsTestServer implements AutoCloseable {
         createIdentity("Tiger TLS Test Server", validity),
         null,
         enabledProtocols,
+        null,
         null,
         ConnectionBehavior.KEEP_READING_AFTER_HANDSHAKE);
   }
@@ -194,6 +224,7 @@ final class TlsTestServer implements AutoCloseable {
         createIdentity("Tiger TLS Test Server", validity),
         trustedClientIdentity,
         enabledProtocols,
+        null,
         null,
         ConnectionBehavior.CLOSE_AFTER_HANDSHAKE);
   }
@@ -219,6 +250,7 @@ final class TlsTestServer implements AutoCloseable {
         trustedClientIdentity,
         enabledProtocols,
         enabledCipherSuites,
+        null,
         ConnectionBehavior.CLOSE_AFTER_HANDSHAKE);
   }
 
@@ -276,6 +308,7 @@ final class TlsTestServer implements AutoCloseable {
    * @param trustedClientIdentity optional client identity trusted for mTLS
    * @param enabledProtocols enabled server protocols
    * @param enabledCipherSuites enabled server cipher suites
+   * @param applicationProtocols enabled ALPN application protocols
    * @param connectionBehavior accepted-connection handling mode
    * @return started TLS test server
    * @throws Exception if the server cannot be started
@@ -285,6 +318,7 @@ final class TlsTestServer implements AutoCloseable {
       GeneratedIdentity trustedClientIdentity,
       String[] enabledProtocols,
       String[] enabledCipherSuites,
+      String[] applicationProtocols,
       ConnectionBehavior connectionBehavior)
       throws Exception {
     try {
@@ -312,10 +346,12 @@ final class TlsTestServer implements AutoCloseable {
       if (enabledCipherSuites != null && enabledCipherSuites.length > 0) {
         serverSocket.setEnabledCipherSuites(enabledCipherSuites);
       }
+      configureApplicationProtocols(serverSocket, applicationProtocols);
       serverSocket.setNeedClientAuth(trustedClientIdentity != null);
 
       final TlsTestServer tlsTestServer =
-          new TlsTestServer(serverSocket, serverIdentity, connectionBehavior);
+          new TlsTestServer(
+              serverSocket, serverIdentity, connectionBehavior, applicationProtocols);
       tlsTestServer.startAcceptLoop();
       return tlsTestServer;
     } catch (Exception e) {
@@ -343,6 +379,22 @@ final class TlsTestServer implements AutoCloseable {
   }
 
   /**
+   * Applies ALPN application protocols to the supplied SSL parameters holder when configured.
+   *
+   * @param serverSocket server socket to configure
+   * @param applicationProtocols ALPN application protocols, or {@code null}
+   */
+  private static void configureApplicationProtocols(
+      SSLServerSocket serverSocket, String[] applicationProtocols) {
+    if (applicationProtocols == null || applicationProtocols.length == 0) {
+      return;
+    }
+    final SSLParameters sslParameters = serverSocket.getSSLParameters();
+    sslParameters.setApplicationProtocols(applicationProtocols.clone());
+    serverSocket.setSSLParameters(sslParameters);
+  }
+
+  /**
    * Starts the asynchronous accept loop used by the test server.
    */
   private void startAcceptLoop() {
@@ -351,6 +403,7 @@ final class TlsTestServer implements AutoCloseable {
           while (!serverSocket.isClosed()) {
             try (SSLSocket socket = (SSLSocket) serverSocket.accept()) {
               socket.setUseClientMode(false);
+              applyAcceptedSocketConfiguration(socket);
               socket.startHandshake();
               handleAcceptedSocket(socket);
             } catch (SocketException e) {
@@ -364,6 +417,20 @@ final class TlsTestServer implements AutoCloseable {
             }
           }
         });
+  }
+
+  /**
+   * Applies per-socket TLS settings before the handshake starts.
+   *
+   * @param socket accepted TLS socket
+   */
+  private void applyAcceptedSocketConfiguration(SSLSocket socket) {
+    if (applicationProtocols == null || applicationProtocols.length == 0) {
+      return;
+    }
+    final SSLParameters sslParameters = socket.getSSLParameters();
+    sslParameters.setApplicationProtocols(applicationProtocols.clone());
+    socket.setSSLParameters(sslParameters);
   }
 
   /**

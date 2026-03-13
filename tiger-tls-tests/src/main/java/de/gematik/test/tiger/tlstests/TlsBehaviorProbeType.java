@@ -32,6 +32,8 @@ public enum TlsBehaviorProbeType {
   TLS_1_2_SECURE_RENEGOTIATION,
   /** Probes whether a target negotiates the extended-master-secret extension during TLS 1.2. */
   TLS_1_2_EXTENDED_MASTER_SECRET,
+  /** Probes whether a target negotiates the encrypt-then-mac extension during a TLS 1.2 CBC handshake. */
+  TLS_1_2_ENCRYPT_THEN_MAC,
   /** Probes whether a target rejects a TLS 1.2 fallback handshake via TLS_FALLBACK_SCSV. */
   TLS_1_2_FALLBACK_SCSV_REJECTION,
   /** Probes whether a target provides an OCSP staple during the TLS handshake. */

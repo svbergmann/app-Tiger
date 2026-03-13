@@ -150,6 +150,46 @@ class TlsComplianceRunnerIT {
   }
 
   /**
+   * Verifies ALPN scanning and the encrypt-then-mac probe in the integration-test phase.
+   *
+   * @throws Exception if the TLS server fixture cannot be started
+   */
+  @Test
+  void applicationProtocolScanAndEncryptThenMacProbeShouldWorkInIntegrationPhase()
+      throws Exception {
+    try (TlsTestServer alpnServer =
+            TlsTestServer.startWithApplicationProtocols(
+                TlsTestServer.CertificateValidity.VALID,
+                new String[] {"TLSv1.2"},
+                new String[] {"h2"});
+        TlsTestServer cbcServer =
+            TlsTestServer.start(
+                TlsTestServer.CertificateValidity.VALID,
+                new String[] {"TLSv1.2"},
+                new String[] {selectSupportedTls12CbcCipherSuite()})) {
+      final TlsFeatureSupportReport applicationProtocolReport =
+          complianceRunner.scanApplicationProtocols(
+              new TlsTestTarget("127.0.0.1", alpnServer.port()),
+              List.of("h2", "http/1.1"),
+              TlsConnectionConfiguration.defaults().withEnabledProtocols(List.of("TLSv1.2")));
+      final TlsBehaviorProbeReport encryptThenMacReport =
+          complianceRunner.probeTls12EncryptThenMacSupport(
+              new TlsTestTarget("127.0.0.1", cbcServer.port()),
+              TlsConnectionConfiguration.defaults().withEnabledProtocols(List.of("TLSv1.2")));
+
+      assertThat(applicationProtocolReport.supportedFeatures()).containsExactly("h2");
+      assertThat(applicationProtocolReport.rejectedFeatures()).containsExactly("http/1.1");
+      assertThat(applicationProtocolReport.findResult("h2"))
+          .hasValueSatisfying(
+              result ->
+                  assertThat(result.evidence().primaryReproductionCommand())
+                      .hasValueSatisfying(command -> assertThat(command).contains("-alpn 'h2'")));
+      assertThat(encryptThenMacReport.details()).isNotBlank();
+      assertThat(encryptThenMacReport.evidence().reproductionCommands()).hasSize(2);
+    }
+  }
+
+  /**
    * Selects one supported TLS 1.2 ECDHE RSA cipher suite for named-group dependent probes.
    *
    * @return supported TLS 1.2 ECDHE RSA cipher suite
@@ -169,5 +209,26 @@ class TlsComplianceRunnerIT {
         .orElseThrow(
             () ->
                 new AssertionError("Expected at least one supported TLS 1.2 ECDHE RSA cipher suite"));
+  }
+
+  /**
+   * Selects one supported TLS 1.2 CBC cipher suite for encrypt-then-mac probing.
+   *
+   * @return supported TLS 1.2 CBC cipher suite
+   * @throws NoSuchAlgorithmException if the TLS SSL context cannot be created
+   */
+  private String selectSupportedTls12CbcCipherSuite() throws NoSuchAlgorithmException {
+    final SSLContext sslContext = SSLContext.getInstance("TLS");
+    try {
+      sslContext.init(null, null, null);
+    } catch (Exception e) {
+      throw new IllegalStateException("Unable to initialize SSLContext for cipher-suite discovery", e);
+    }
+    return Arrays.stream(sslContext.getSupportedSSLParameters().getCipherSuites())
+        .filter(cipherSuite -> cipherSuite.startsWith("TLS_"))
+        .filter(cipherSuite -> cipherSuite.contains("_CBC_"))
+        .findFirst()
+        .orElseThrow(
+            () -> new AssertionError("Expected at least one supported TLS 1.2 CBC cipher suite"));
   }
 }

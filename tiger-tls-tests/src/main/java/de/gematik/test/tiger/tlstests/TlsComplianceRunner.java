@@ -45,6 +45,7 @@ import org.bouncycastle.tls.NamedGroup;
 import org.bouncycastle.tls.NameType;
 import org.bouncycastle.tls.OCSPStatusRequest;
 import org.bouncycastle.tls.ProtocolVersion;
+import org.bouncycastle.tls.ProtocolName;
 import org.bouncycastle.tls.ServerName;
 import org.bouncycastle.tls.SignatureAndHashAlgorithm;
 import org.bouncycastle.tls.SignatureScheme;
@@ -127,6 +128,27 @@ public class TlsComplianceRunner {
         target.port(),
         cipherSuites);
     return scanFeatures(target, cipherSuites, configuration, TlsScannedFeatureType.CIPHER_SUITE);
+  }
+
+  /**
+   * Scans a list of ALPN application protocols against a target endpoint.
+   *
+   * @param target target endpoint to probe
+   * @param applicationProtocols ALPN application protocols to test
+   * @param configuration base TLS client configuration
+   * @return structured application-protocol support report
+   */
+  public TlsFeatureSupportReport scanApplicationProtocols(
+      TlsTestTarget target,
+      List<String> applicationProtocols,
+      TlsConnectionConfiguration configuration) {
+    LOG.info(
+        "Running TLS application-protocol scan against {}:{} for {}",
+        target.host(),
+        target.port(),
+        applicationProtocols);
+    return scanFeatures(
+        target, applicationProtocols, configuration, TlsScannedFeatureType.APPLICATION_PROTOCOL);
   }
 
   /**
@@ -437,6 +459,81 @@ public class TlsComplianceRunner {
   }
 
   /**
+   * Probes whether the server negotiates the encrypt-then-mac extension during a TLS 1.2 CBC
+   * handshake.
+   *
+   * @param target target endpoint to probe
+   * @param configuration base TLS client configuration
+   * @return behavior probe report for encrypt-then-mac support
+   */
+  public TlsBehaviorProbeReport probeTls12EncryptThenMacSupport(
+      TlsTestTarget target, TlsConnectionConfiguration configuration) {
+    final TlsConnectionConfiguration tls12Configuration = withTls12Only(configuration);
+    final TlsProbeEvidenceBuilder evidence =
+        tlsOpenSslEvidenceFactory.forBehaviorProbe(
+            target, tls12Configuration, TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC);
+    evidence.addNote(LOW_LEVEL_VALIDATION_NOTE);
+    evidence.addLogEntry("Starting TLS 1.2 encrypt-then-mac probe");
+
+    final List<String> candidateCipherSuites = resolveTls12CbcCipherSuites(tls12Configuration);
+    if (candidateCipherSuites.isEmpty()) {
+      evidence.addLogEntry("No TLS 1.2 CBC cipher suites are available in the current runtime");
+      return buildBehaviorReport(
+          target,
+          TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC,
+          TlsTestVerdict.FAILED,
+          "TLS 1.2 encrypt-then-mac probe could not start because no TLS 1.2 CBC cipher suite is available",
+          null,
+          null,
+          evidence);
+    }
+
+    String lastFailureMessage = "no CBC handshake attempt was performed";
+    for (String candidateCipherSuite : candidateCipherSuites) {
+      final TlsConnectionConfiguration probeConfiguration =
+          tls12Configuration.withEnabledCipherSuites(List.of(candidateCipherSuite));
+      final InspectableTlsClient client =
+          new InspectableTlsClient(target, probeConfiguration, LowLevelClientOptions.defaults());
+      evidence.addLogEntry("Trying TLS 1.2 CBC cipher suite " + candidateCipherSuite);
+      try {
+        final TlsSessionSummary sessionSummary =
+            connectLowLevel(target, probeConfiguration, client, evidence);
+        final boolean supported = client.encryptThenMacSupported();
+        evidence.addLogEntry(
+            "encrypt-then-mac advertised for " + candidateCipherSuite + ": " + supported);
+        return buildBehaviorReport(
+            target,
+            TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC,
+            supported ? TlsTestVerdict.PASSED : TlsTestVerdict.FAILED,
+            supported
+                ? "Peer negotiated encrypt-then-mac during a TLS 1.2 CBC handshake"
+                : "Peer completed a TLS 1.2 CBC handshake without negotiating encrypt-then-mac",
+            sessionSummary,
+            null,
+            evidence);
+      } catch (Exception e) {
+        recordClientAlerts(client, evidence);
+        lastFailureMessage = tlsClientProbeSupport.extractRootCauseMessage(e);
+        evidence.addLogEntry(
+            "TLS 1.2 CBC handshake with "
+                + candidateCipherSuite
+                + " failed: "
+                + lastFailureMessage);
+      }
+    }
+
+    return buildBehaviorReport(
+        target,
+        TlsBehaviorProbeType.TLS_1_2_ENCRYPT_THEN_MAC,
+        TlsTestVerdict.FAILED,
+        "TLS 1.2 encrypt-then-mac probe could not negotiate any TLS 1.2 CBC cipher suite: "
+            + lastFailureMessage,
+        null,
+        null,
+        evidence);
+  }
+
+  /**
    * Probes whether the server rejects a TLS 1.2 fallback handshake with the fallback-SCSV signal.
    *
    * @param target target endpoint to probe
@@ -636,7 +733,8 @@ public class TlsComplianceRunner {
         buildFeatureEvidence(target, configuration, featureType, feature);
     evidence.addLogEntry("Scanning feature " + feature + " of type " + featureType);
     if (featureType == TlsScannedFeatureType.NAMED_GROUP
-        || featureType == TlsScannedFeatureType.SIGNATURE_SCHEME) {
+        || featureType == TlsScannedFeatureType.SIGNATURE_SCHEME
+        || featureType == TlsScannedFeatureType.APPLICATION_PROTOCOL) {
       evidence.addNote(LOW_LEVEL_VALIDATION_NOTE);
       return scanLowLevelFeature(target, feature, configuration, featureType, evidence);
     }
@@ -682,6 +780,8 @@ public class TlsComplianceRunner {
       case PROTOCOL -> tlsOpenSslEvidenceFactory.forProtocolProbe(target, configuration, feature);
       case CIPHER_SUITE ->
           tlsOpenSslEvidenceFactory.forCipherSuiteProbe(target, configuration, feature);
+      case APPLICATION_PROTOCOL ->
+          tlsOpenSslEvidenceFactory.forApplicationProtocolProbe(target, configuration, feature);
       case NAMED_GROUP ->
           tlsOpenSslEvidenceFactory.forNamedGroupProbe(target, configuration, feature);
       case SIGNATURE_SCHEME ->
@@ -707,6 +807,8 @@ public class TlsComplianceRunner {
       TlsProbeEvidenceBuilder evidence) {
     final LowLevelClientOptions options =
         switch (featureType) {
+          case APPLICATION_PROTOCOL ->
+              LowLevelClientOptions.withApplicationProtocols(new String[] {feature});
           case NAMED_GROUP ->
               LowLevelClientOptions.withNamedGroups(new int[] {mapNamedGroup(feature)});
           case SIGNATURE_SCHEME ->
@@ -719,6 +821,29 @@ public class TlsComplianceRunner {
     try {
       final TlsSessionSummary sessionSummary =
           connectLowLevel(target, configuration, client, evidence);
+      if (featureType == TlsScannedFeatureType.APPLICATION_PROTOCOL) {
+        final String negotiatedApplicationProtocol = client.selectedApplicationProtocol();
+        if (feature.equals(negotiatedApplicationProtocol)) {
+          return new TlsFeatureSupportResult(
+              feature,
+              TlsTestVerdict.PASSED,
+              "Low-level handshake selected ALPN application protocol " + feature,
+              sessionSummary,
+              evidence.build());
+        }
+        return new TlsFeatureSupportResult(
+            feature,
+            TlsTestVerdict.FAILED,
+            negotiatedApplicationProtocol == null
+                ? "Low-level handshake succeeded without selecting ALPN application protocol "
+                    + feature
+                : "Low-level handshake selected ALPN application protocol "
+                    + negotiatedApplicationProtocol
+                    + " instead of "
+                    + feature,
+            sessionSummary,
+            evidence.build());
+      }
       return new TlsFeatureSupportResult(
           feature,
           TlsTestVerdict.PASSED,
@@ -747,6 +872,48 @@ public class TlsComplianceRunner {
    */
   private TlsConnectionConfiguration withTls12Only(TlsConnectionConfiguration configuration) {
     return configuration.withEnabledProtocols(List.of("TLSv1.2"));
+  }
+
+  /**
+   * Resolves the candidate TLS 1.2 CBC cipher suites used by the encrypt-then-mac probe.
+   *
+   * @param configuration base TLS connection configuration
+   * @return ordered list of candidate TLS 1.2 CBC cipher suites
+   */
+  private List<String> resolveTls12CbcCipherSuites(TlsConnectionConfiguration configuration) {
+    final List<String> configuredCipherSuites =
+        configuration.enabledCipherSuites().stream().filter(this::isTls12CbcCipherSuite).toList();
+    if (!configuredCipherSuites.isEmpty()) {
+      return configuredCipherSuites;
+    }
+
+    try {
+      final SSLContext sslContext = SSLContext.getInstance("TLS");
+      sslContext.init(null, null, null);
+      return Arrays.stream(sslContext.getSupportedSSLParameters().getCipherSuites())
+          .filter(this::isTls12CbcCipherSuite)
+          .sorted()
+          .toList();
+    } catch (Exception e) {
+      throw new IllegalStateException(
+          "Unable to discover supported TLS 1.2 CBC cipher suites for encrypt-then-mac probing",
+          e);
+    }
+  }
+
+  /**
+   * Returns whether a cipher-suite token represents a TLS 1.2 CBC suite suitable for the
+   * encrypt-then-mac probe.
+   *
+   * @param cipherSuite cipher-suite token to inspect
+   * @return {@code true} if the token represents a TLS 1.2 CBC suite
+   */
+  private boolean isTls12CbcCipherSuite(String cipherSuite) {
+    return cipherSuite != null
+        && cipherSuite.startsWith("TLS_")
+        && cipherSuite.contains("_CBC_")
+        && !cipherSuite.startsWith("TLS_AES_")
+        && !cipherSuite.startsWith("TLS_CHACHA20_");
   }
 
   /**
@@ -1070,6 +1237,7 @@ public class TlsComplianceRunner {
    * @param requestOcspStapling whether to request a stapled OCSP response
    * @param sendUnknownExtension whether to add an unknown ClientHello extension
    * @param fallbackScsv whether to signal a fallback handshake
+   * @param applicationProtocols optional ALPN application protocols to advertise
    * @param supportedNamedGroups optional named-group override for low-level scans
    * @param supportedSignatureSchemes optional signature-scheme override for low-level scans
    */
@@ -1077,6 +1245,7 @@ public class TlsComplianceRunner {
       boolean requestOcspStapling,
       boolean sendUnknownExtension,
       boolean fallbackScsv,
+      String[] applicationProtocols,
       int[] supportedNamedGroups,
       int[] supportedSignatureSchemes) {
 
@@ -1086,7 +1255,7 @@ public class TlsComplianceRunner {
      * @return default low-level client options
      */
     private static LowLevelClientOptions defaults() {
-      return new LowLevelClientOptions(false, false, false, null, null);
+      return new LowLevelClientOptions(false, false, false, null, null, null);
     }
 
     /**
@@ -1095,7 +1264,7 @@ public class TlsComplianceRunner {
      * @return OCSP-stapling probe options
      */
     private static LowLevelClientOptions withOcspStapling() {
-      return new LowLevelClientOptions(true, false, false, null, null);
+      return new LowLevelClientOptions(true, false, false, null, null, null);
     }
 
     /**
@@ -1104,7 +1273,7 @@ public class TlsComplianceRunner {
      * @return fallback probe options
      */
     private static LowLevelClientOptions withFallbackScsv() {
-      return new LowLevelClientOptions(false, false, true, null, null);
+      return new LowLevelClientOptions(false, false, true, null, null, null);
     }
 
     /**
@@ -1113,7 +1282,23 @@ public class TlsComplianceRunner {
      * @return unknown-extension probe options
      */
     private static LowLevelClientOptions withUnknownExtension() {
-      return new LowLevelClientOptions(false, true, false, null, null);
+      return new LowLevelClientOptions(false, true, false, null, null, null);
+    }
+
+    /**
+     * Returns low-level options that advertise only the supplied ALPN application protocols.
+     *
+     * @param applicationProtocols ALPN application protocols to advertise
+     * @return ALPN probe options
+     */
+    private static LowLevelClientOptions withApplicationProtocols(String[] applicationProtocols) {
+      return new LowLevelClientOptions(
+          false,
+          false,
+          false,
+          applicationProtocols == null ? null : applicationProtocols.clone(),
+          null,
+          null);
     }
 
     /**
@@ -1127,6 +1312,7 @@ public class TlsComplianceRunner {
           false,
           false,
           false,
+          null,
           supportedNamedGroups == null ? null : supportedNamedGroups.clone(),
           null);
     }
@@ -1143,6 +1329,7 @@ public class TlsComplianceRunner {
           false,
           false,
           null,
+          null,
           supportedSignatureSchemes == null ? null : supportedSignatureSchemes.clone());
     }
   }
@@ -1157,13 +1344,16 @@ public class TlsComplianceRunner {
     private final ProtocolVersion[] protocolVersions;
     private final int[] cipherSuites;
     private final LowLevelClientOptions options;
+    private final String[] applicationProtocols;
     private final int[] supportedNamedGroups;
     private final int[] supportedSignatureSchemes;
     private boolean ocspStaplingPresent;
     private boolean secureRenegotiationSupported;
     private boolean extendedMasterSecretSupported;
+    private boolean encryptThenMacSupported;
     private ProtocolVersion selectedProtocolVersion;
     private int selectedCipherSuite = -1;
+    private String selectedApplicationProtocol;
     private Short receivedAlertDescription;
     private Short raisedAlertDescription;
 
@@ -1186,6 +1376,8 @@ public class TlsComplianceRunner {
               ? appendFallbackScsv(resolveBcCipherSuites(configuration))
               : resolveBcCipherSuites(configuration);
       this.options = options;
+      this.applicationProtocols =
+          options.applicationProtocols() == null ? null : options.applicationProtocols().clone();
       this.supportedNamedGroups =
           options.supportedNamedGroups() == null
               ? null
@@ -1224,6 +1416,24 @@ public class TlsComplianceRunner {
     @Override
     public int[] getCipherSuites() {
       return cipherSuites == null ? super.getCipherSuites() : cipherSuites;
+    }
+
+    /**
+     * Returns the ALPN application protocols advertised by the low-level client.
+     *
+     * @return effective ALPN application protocols, or {@code null} to omit ALPN
+     */
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    @Override
+    protected Vector getProtocolNames() {
+      if (applicationProtocols == null) {
+        return super.getProtocolNames();
+      }
+      final Vector protocolNames = new Vector(applicationProtocols.length);
+      for (String applicationProtocol : applicationProtocols) {
+        protocolNames.add(ProtocolName.asUtf8Encoding(applicationProtocol));
+      }
+      return protocolNames;
     }
 
     /**
@@ -1373,9 +1583,16 @@ public class TlsComplianceRunner {
     @Override
     public void processServerExtensions(Hashtable serverExtensions) throws IOException {
       super.processServerExtensions(serverExtensions);
+      if (serverExtensions == null) {
+        return;
+      }
+      final ProtocolName negotiatedProtocolName =
+          TlsExtensionsUtils.getALPNExtensionServer(serverExtensions);
+      selectedApplicationProtocol =
+          negotiatedProtocolName == null ? null : negotiatedProtocolName.getUtf8Decoding();
+      encryptThenMacSupported = TlsExtensionsUtils.hasEncryptThenMACExtension(serverExtensions);
       extendedMasterSecretSupported =
-          serverExtensions != null
-              && TlsExtensionsUtils.hasExtendedMasterSecretExtension(serverExtensions);
+          TlsExtensionsUtils.hasExtendedMasterSecretExtension(serverExtensions);
     }
 
     /**
@@ -1462,6 +1679,24 @@ public class TlsComplianceRunner {
      */
     private boolean extendedMasterSecretSupported() {
       return extendedMasterSecretSupported;
+    }
+
+    /**
+     * Returns whether the encrypt-then-mac extension was negotiated.
+     *
+     * @return {@code true} if encrypt-then-mac was negotiated
+     */
+    private boolean encryptThenMacSupported() {
+      return encryptThenMacSupported;
+    }
+
+    /**
+     * Returns the selected ALPN application protocol, when the server sent one.
+     *
+     * @return selected ALPN application protocol, or {@code null}
+     */
+    private String selectedApplicationProtocol() {
+      return selectedApplicationProtocol;
     }
 
     /**

@@ -85,6 +85,29 @@ final class TlsOpenSslEvidenceFactory {
   }
 
   /**
+   * Builds evidence for probing one ALPN application protocol token.
+   *
+   * @param target probed target endpoint
+   * @param configuration probe configuration
+   * @param applicationProtocol application protocol token under test
+   * @return evidence builder populated with reproduction data
+   */
+  TlsProbeEvidenceBuilder forApplicationProtocolProbe(
+      TlsTestTarget target,
+      TlsConnectionConfiguration configuration,
+      String applicationProtocol) {
+    final TlsProbeEvidenceBuilder builder = baseEvidence(target, configuration);
+    builder.addReproductionCommand(
+        baseCommand(target, configuration)
+            + " -alpn '"
+            + applicationProtocol
+            + "' </dev/null");
+    builder.addLogEntry(
+        "OpenSSL reproduction prepared for ALPN application protocol " + applicationProtocol);
+    return builder;
+  }
+
+  /**
    * Builds evidence for probing one named group token.
    *
    * @param target probed target endpoint
@@ -188,6 +211,15 @@ final class TlsOpenSslEvidenceFactory {
       case TLS_1_2_EXTENDED_MASTER_SECRET ->
           builder.addReproductionCommand(
               baseCommand(target, configuration) + " -tls1_2 -tlsextdebug </dev/null");
+      case TLS_1_2_ENCRYPT_THEN_MAC -> {
+        builder.addReproductionCommand(
+            "openssl ciphers -stdname | grep -E 'TLS_(ECDHE|DHE|RSA)_(RSA|ECDSA)?_?WITH_AES_(128|256)_CBC_SHA(256)?'");
+        builder.addReproductionCommand(
+            baseCommand(target, configuration)
+                + " -tls1_2 -cipher '<OPENSSL_TLS12_CBC_CIPHER_NAME>' -tlsextdebug </dev/null");
+        builder.addNote(
+            "The encrypt-then-mac probe requires a TLS 1.2 CBC cipher suite. Resolve one OpenSSL CBC cipher name with the first command before running the second command.");
+      }
       case TLS_1_2_FALLBACK_SCSV_REJECTION ->
           builder.addReproductionCommand(
               baseCommand(target, configuration) + " -tls1_2 -fallback_scsv </dev/null");
