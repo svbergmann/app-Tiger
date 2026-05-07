@@ -244,7 +244,7 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
           receiverAddress.getScheme() != null
               && receiverAddress.getScheme().equals(SocketAddress.Scheme.HTTPS);
       val port = computePort(receiverAddress.getPort(), isSsl);
-      return Optional.of(new InetSocketAddress(receiverAddress.getHost(), port));
+      return Optional.of(InetSocketAddress.createUnresolved(receiverAddress.getHost(), port));
     } else if (isNotBlank(getFirstHeader(HOST.toString()))) {
       boolean isSsl = Optional.ofNullable(isSecure()).orElse(false);
       return Optional.of(parseHostAndPort(getFirstHeader(HOST.toString()), isSsl ? 443 : 80));
@@ -286,7 +286,7 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
     }
 
     var hostAndPort = HostAndPort.fromString(host).withDefaultPort(port);
-    return new InetSocketAddress(hostAndPort.getHost(), hostAndPort.getPort());
+    return InetSocketAddress.createUnresolved(hostAndPort.getHost(), hostAndPort.getPort());
   }
 
   public String getMethodOrDefault(String fallback) {
