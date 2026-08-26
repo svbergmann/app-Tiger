@@ -20,12 +20,8 @@
  */
 package de.gematik.test.tiger.proxy;
 
-import static de.gematik.rbellogger.data.RbelElementAssertion.assertThat;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
-import de.gematik.rbellogger.data.RbelElement;
 import de.gematik.test.tiger.common.data.config.tigerproxy.*;
 import de.gematik.test.tiger.config.ResetTigerConfiguration;
 import java.io.IOException;
@@ -37,40 +33,29 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Stream;
 import kong.unirest.core.*;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.MethodSource;
 
 @Slf4j
 @TestInstance(Lifecycle.PER_CLASS)
 @ResetTigerConfiguration
 class TestTigerPortHandling extends AbstractTigerProxyTest {
 
+  /**
+   * TGR-2182. A pooled backend connection is keyed by the incoming channel that opened it, so once
+   * the client disconnects it can never be handed out again - it has to be closed right away rather
+   * than lingering until the pool TTL expires.
+   */
   @Test
-  void proxyShouldClosePortToServerAsSoonAsClientPortIsClosed()
-      throws InterruptedException {
+  void proxyShouldClosePortToServerAsSoonAsClientPortIsClosed() throws InterruptedException {
     try (FakeHttpServer fakeBackend = new FakeHttpServer()) {
       fakeBackend.startAndExpectOneRequestAndClose();
 
-      int backendPort = fakeBackend.getPort();
-      spawnTigerProxyWith(
-          TigerProxyConfiguration.builder()
-              .proxyRoutes(
-                  List.of(
-                      TigerConfigurationRoute.builder()
-                          .from("/")
-                          .to("http://127.0.0.1:" + backendPort)
-                          .preserveHostHeader(true)
-                          .build()))
-              .build());
+      spawnProxyRoutingTo(fakeBackend.getPort());
 
       sendHttpGetAndCloseImmediately("localhost", tigerProxy.getProxyPort());
 
@@ -85,6 +70,51 @@ class TestTigerPortHandling extends AbstractTigerProxyTest {
     } catch (Exception e) {
       if (Thread.interrupted()) throw new InterruptedException();
     }
+  }
+
+  /** The TTL sweep is the backstop for channels whose client connection is alive but idle. */
+  @Test
+  void unusedBackendConnectionShouldBeClosedByPoolCleanup() throws InterruptedException {
+    try (FakeHttpServer fakeBackend = new FakeHttpServer()) {
+      fakeBackend.startAndExpectOneRequestAndClose();
+
+      spawnProxyRoutingTo(fakeBackend.getPort());
+
+      sendHttpGetAndCloseImmediately("localhost", tigerProxy.getProxyPort());
+
+      val channelMap =
+          tigerProxy
+              .getMockServer()
+              .getActionHandler()
+              .getHttpClient()
+              .getClientBootstrapFactory()
+              .getChannelMap();
+      channelMap.setChannelPoolTtlMillis(0);
+      channelMap.cleanupExpiredChannels();
+
+      boolean closedInTime = fakeBackend.awaitConnectionClosed(5, TimeUnit.SECONDS);
+
+      assertThat(closedInTime)
+          .withFailMessage("Der Proxy hat die ungenutzte Verbindung zum Backend nicht aufgeräumt.")
+          .isTrue();
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    } catch (Exception e) {
+      if (Thread.interrupted()) throw new InterruptedException();
+    }
+  }
+
+  private void spawnProxyRoutingTo(int backendPort) {
+    spawnTigerProxyWith(
+        TigerProxyConfiguration.builder()
+            .proxyRoutes(
+                List.of(
+                    TigerConfigurationRoute.builder()
+                        .from("/")
+                        .to("http://127.0.0.1:" + backendPort)
+                        .preserveHostHeader(true)
+                        .build()))
+            .build());
   }
 
   class FakeHttpServer implements AutoCloseable {

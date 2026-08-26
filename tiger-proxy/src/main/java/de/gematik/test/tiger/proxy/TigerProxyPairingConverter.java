@@ -86,6 +86,7 @@ public class TigerProxyPairingConverter extends RbelConverterPlugin {
         converter
             .findPreviousMessageInSameConnectionAs(rbelElement)
             .filter(req -> req.hasFacet(RbelHttpRequestFacet.class))
+            .filter(req -> !req.hasFacet(TracingMessagePairFacet.class))
             .ifPresent(req -> addPairingFacet(rbelElement, req));
       }
       addHostnames(rbelElement);

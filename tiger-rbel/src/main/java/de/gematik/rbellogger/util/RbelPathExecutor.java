@@ -39,13 +39,13 @@ import org.apache.commons.lang3.math.NumberUtils;
 
 @RequiredArgsConstructor
 @Slf4j
-public class RbelPathExecutor<T extends RbelPathAble> {
+public class RbelPathExecutor<T extends RbelPathAble<T>> {
 
   private final T targetObject;
   private final String rbelPath;
 
-  private static Stream<RbelPathAble> findAllChildrenRecursive(final RbelPathAble content) {
-    return new RecursiveTreeIterator<RbelPathAble>(
+  private static Stream<RbelPathAble<?>> findAllChildrenRecursive(final RbelPathAble<?> content) {
+    return new RecursiveTreeIterator<RbelPathAble<?>>(
             content.getChildNodes().iterator(), e -> e.getChildNodes().iterator())
         .stream();
   }
@@ -73,8 +73,10 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     return keys;
   }
 
-  private static Stream<? extends RbelPathAble> executeNamedSelection(
-      String functionExpression, RbelPathAble content, BiPredicate<String, String> keyPredicate) {
+  private static Stream<? extends RbelPathAble<?>> executeNamedSelection(
+      String functionExpression,
+      RbelPathAble<?> content,
+      BiPredicate<String, String> keyPredicate) {
     return Stream.of(functionExpression.split("\\|"))
         .map(
             s -> {
@@ -85,12 +87,16 @@ public class RbelPathExecutor<T extends RbelPathAble> {
               return s.substring(1, s.length() - 1);
             })
         .map(s1 -> URLDecoder.decode(s1, StandardCharsets.UTF_8))
-        .flatMap(
-            key ->
-                content
-                    .getChildNodesWithKeyStream()
-                    .filter(entry -> keyPredicate.test(key, entry.getKey()))
-                    .map(Map.Entry::getValue));
+        .flatMap(key -> childrenMatchingKey(content, key, keyPredicate));
+  }
+
+  /** Extracted so that wildcard capture of {@code content} works outside a lambda scope. */
+  private static Stream<? extends RbelPathAble<?>> childrenMatchingKey(
+      RbelPathAble<?> content, String key, BiPredicate<String, String> keyPredicate) {
+    return content
+        .getChildNodesWithKeyStream()
+        .filter(entry -> keyPredicate.test(key, entry.getKey()))
+        .map(Map.Entry::getValue);
   }
 
   @SuppressWarnings("unchecked")
@@ -171,14 +177,14 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     }
   }
 
-  private Stream<? extends RbelPathAble> resolveRbelPathElement(
-      final String key, final RbelPathAble content) {
+  private Stream<? extends RbelPathAble<?>> resolveRbelPathElement(
+      final String key, final RbelPathAble<?> content) {
     if (key.equals(".")) {
       return Stream.concat(findAllChildrenRecursive(content), Stream.of(content));
     }
     final String[] parts = key.split("\\[", 2);
     final String selectorPart = parts[0];
-    List<? extends RbelPathAble> keySelectionResult =
+    List<? extends RbelPathAble<?>> keySelectionResult =
         executeNonFunctionalExpression(selectorPart, content);
     if (parts.length == 1 || keySelectionResult.isEmpty()) {
       return keySelectionResult.stream();
@@ -188,8 +194,8 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     }
   }
 
-  private Stream<? extends RbelPathAble> filterResultsThroughFunctionalSelector(
-      List<? extends RbelPathAble> keySelectionResult,
+  private Stream<? extends RbelPathAble<?>> filterResultsThroughFunctionalSelector(
+      List<? extends RbelPathAble<?>> keySelectionResult,
       String functionalPart,
       boolean selectorPartIsEmpty) {
     if (RbelOptions.isActivateRbelPathDebugging()) {
@@ -213,8 +219,8 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     }
   }
 
-  private List<? extends RbelPathAble> executeNonFunctionalExpression(
-      String key, RbelPathAble content) {
+  private List<? extends RbelPathAble<?>> executeNonFunctionalExpression(
+      String key, RbelPathAble<?> content) {
     if (key.equals("*")) {
       return content.getChildNodes();
     } else if (key.isEmpty()) {
@@ -224,8 +230,8 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     }
   }
 
-  private Stream<? extends RbelPathAble> executeFunctionalExpression(
-      final String functionExpression, final RbelPathAble content, boolean selectorPartIsEmpty) {
+  private Stream<? extends RbelPathAble<?>> executeFunctionalExpression(
+      final String functionExpression, final RbelPathAble<?> content, boolean selectorPartIsEmpty) {
     if (functionExpression.startsWith("'") && functionExpression.endsWith("'")) {
       return executeNamedSelection(functionExpression, content, String::equals);
     } else if (functionExpression.equals("*")) {
@@ -255,9 +261,9 @@ public class RbelPathExecutor<T extends RbelPathAble> {
     }
   }
 
-  private Stream<? extends RbelPathAble> findChildNodesByJexlExpression(
-      final RbelPathAble position, final String jexl, boolean selectorPartIsEmpty) {
-    List<RbelPathAble> candidates = new ArrayList<>();
+  private Stream<? extends RbelPathAble<?>> findChildNodesByJexlExpression(
+      final RbelPathAble<?> position, final String jexl, boolean selectorPartIsEmpty) {
+    List<RbelPathAble<?>> candidates = new ArrayList<>();
     if (selectorPartIsEmpty) {
       position.getChildNodesStream().forEach(candidates::add);
     } else {
@@ -275,7 +281,7 @@ public class RbelPathExecutor<T extends RbelPathAble> {
                         .withRootElement(this.targetObject)));
   }
 
-  private static <T extends RbelPathAble> List<String> getPathList(List<T> resultList) {
+  private static List<String> getPathList(List<? extends RbelPathAble<?>> resultList) {
     return resultList.stream().map(RbelPathAble::findNodePath).map(path -> "$." + path).toList();
   }
 }

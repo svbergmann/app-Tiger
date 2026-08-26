@@ -21,7 +21,6 @@
 package de.gematik.rbellogger;
 
 import de.gematik.rbellogger.data.RbelElement;
-import de.gematik.rbellogger.data.RbelMultiMap;
 import de.gematik.rbellogger.data.facet.RbelNonTransmissionMarkerFacet;
 import de.gematik.rbellogger.facets.timing.RbelMessageTimingFacet;
 import java.time.ZonedDateTime;
@@ -57,8 +56,8 @@ public class RbelMessageHistory {
   private final TreeSet<RbelElement> timestampSortedMessages =
       new TreeSet<>(TIMESTAMP_SEQ_COMPARATOR);
   @Getter private final KnownUuidsContainer knownMessageUuids;
-  private final RbelMultiMap<CompletableFuture<RbelElement>> messagesWaitingForCompletion =
-      new RbelMultiMap<>();
+  private final Map<String, List<CompletableFuture<RbelElement>>> messagesWaitingForCompletion =
+      new HashMap<>();
 
   private final List<Runnable> historyClearCallbacks = new LinkedList<>();
   private final List<Consumer<RbelElement>> messageRemovedFromHistoryCallbacks = new LinkedList<>();
@@ -277,26 +276,35 @@ public class RbelMessageHistory {
               .map(
                   msg -> {
                     final CompletableFuture<RbelElement> future = new CompletableFuture<>();
-                    messagesWaitingForCompletion.put(msg.getUuid(), future);
+                    messagesWaitingForCompletion
+                        .computeIfAbsent(msg.getUuid(), k -> new ArrayList<>())
+                        .add(future);
                     return Pair.of(future, msg);
                   })
               .toList();
     }
-    for (Pair<CompletableFuture<RbelElement>, RbelElement> future : callbacks) {
-      try {
-        future.getKey().get(100, TimeUnit.SECONDS);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new RuntimeException(e);
-      } catch (ExecutionException e) {
-        throw new RuntimeException(e);
-      } catch (TimeoutException e) {
-        throw new RuntimeException(
-            "Tripped the timeout of 100 seconds while waiting for message "
-                + future.getValue().getUuid()
-                + " to finish parsing",
-            e);
-      }
+    if (callbacks.isEmpty()) {
+      return;
+    }
+    try {
+      CompletableFuture.allOf(
+              callbacks.stream().map(Pair::getKey).toArray(CompletableFuture[]::new))
+          .get(100, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      throw new RuntimeException(e);
+    } catch (ExecutionException e) {
+      throw new RuntimeException(e);
+    } catch (TimeoutException e) {
+      throw new RuntimeException(
+          "Tripped the timeout of 100 seconds while waiting for message "
+              + callbacks.stream()
+                  .filter(pair -> !pair.getKey().isDone())
+                  .findFirst()
+                  .map(pair -> pair.getValue().getUuid())
+                  .orElse("<unknown>")
+              + " to finish parsing",
+          e);
     }
   }
 
@@ -322,7 +330,8 @@ public class RbelMessageHistory {
   private List<CompletableFuture<RbelElement>> removeFuturesWaitingForCompletionOf(
       RbelElement element) {
     synchronized (messagesWaitingForCompletion) {
-      return messagesWaitingForCompletion.removeAll(element.getUuid());
+      return Optional.ofNullable(messagesWaitingForCompletion.remove(element.getUuid()))
+          .orElseGet(List::of);
     }
   }
 

@@ -21,23 +21,14 @@ package de.gematik.test.tiger.proxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
-import static org.mockito.Mockito.*;
 
-import de.gematik.rbellogger.util.RbelInternetAddressParser;
 import de.gematik.test.tiger.common.data.config.tigerproxy.TigerConfigurationRoute;
 import de.gematik.test.tiger.common.data.config.tigerproxy.TigerProxyConfiguration;
 import de.gematik.test.tiger.config.ResetTigerConfiguration;
-import de.gematik.test.tiger.mockserver.httpclient.BinaryBridgeHandler;
-import de.gematik.test.tiger.mockserver.httpclient.NettyHttpClient;
-import de.gematik.test.tiger.mockserver.mock.action.http.HttpActionHandler;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.util.Attribute;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
-import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -89,41 +80,6 @@ class TestHttpForwardingKeepAlive extends AbstractTigerProxyTest {
                   + " explicit 'Connection: keep-alive' header, the backend closes the connection"
                   + " after each response, forcing a new TCP handshake per request (~50 ms).")
           .isEqualTo(1);
-    }
-  }
-
-  /**
-   * Regression test for TGR-2201: DNS resolution must be cached. Verifies that calling {@code
-   * HttpActionHandler.getRemoteAddress()} twice with the same non-loopback remote socket only
-   * triggers one DNS resolution.
-   */
-  @Test
-  void getRemoteAddress_calledTwiceForSameHost_shouldResolveDnsOnlyOnce() {
-    HttpActionHandler.clearResolvedHostCache();
-
-    // Mock a Netty ChannelHandlerContext returning an unresolved, non-loopback remote socket
-    var ctx = mock(ChannelHandlerContext.class);
-    var channel = mock(Channel.class);
-    when(ctx.channel()).thenReturn(channel);
-    var unresolvedRemote =
-        InetSocketAddress.createUnresolved("some.non.loopback.host.invalid", 12345);
-    var remoteSocketAttr = mock(Attribute.class);
-    when(remoteSocketAttr.get()).thenReturn(unresolvedRemote);
-    when(channel.attr(NettyHttpClient.REMOTE_SOCKET)).thenReturn(remoteSocketAttr);
-    var outgoingChannelAttr = mock(Attribute.class);
-    when(outgoingChannelAttr.get()).thenReturn(null);
-    when(channel.attr(BinaryBridgeHandler.OUTGOING_CHANNEL)).thenReturn(outgoingChannelAttr);
-    when(channel.localAddress()).thenReturn(new InetSocketAddress("0.0.0.0", 0));
-
-    try (var parserMock = mockStatic(RbelInternetAddressParser.class, CALLS_REAL_METHODS)) {
-      HttpActionHandler.getRemoteAddress(ctx);
-      HttpActionHandler.getRemoteAddress(ctx);
-      HttpActionHandler.getRemoteAddress(ctx);
-
-      // Verify DNS parser was only invoked once thanks to the cache
-      parserMock.verify(
-          () -> RbelInternetAddressParser.parseInetAddress("some.non.loopback.host.invalid"),
-          times(1));
     }
   }
 

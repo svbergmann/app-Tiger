@@ -49,6 +49,7 @@ public class BinaryBridgeHandler extends SimpleChannelInboundHandler<BinaryMessa
       AttributeKey.valueOf("OUTGOING_CHANNEL");
   public static final AttributeKey<Channel> INCOMING_CHANNEL =
       AttributeKey.valueOf("INCOMING_CHANNEL");
+
   public static final AttributeKey<RbelSocketAddress> VIRTUAL_SERVER_ADDRESS =
       AttributeKey.valueOf("VIRTUAL_SERVER_ADRESS");
   private final BinaryExchangeHandler binaryProxyListener;

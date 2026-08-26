@@ -22,21 +22,58 @@ package de.gematik.test.tiger.util;
 
 import static de.gematik.test.tiger.common.util.FunctionWithCheckedException.nullOnException;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import java.net.InetAddress;
+import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
+import java.util.Optional;
 
 public class NoProxyUtils {
+  private static final Cache<String, Optional<String>> RESOLVED_NO_PROXY_HOST_CACHE =
+      CacheBuilder.newBuilder()
+          .expireAfterWrite(Duration.ofMinutes(10))
+          .maximumSize(10_000)
+          .build();
 
   public static boolean shouldUseProxyForHost(
       InetAddress remoteAddress, List<String> noProxyHosts) {
     if (noProxyHosts == null) {
       return true;
     }
+    final String remoteHostName = remoteAddress.getHostName();
     return noProxyHosts.stream()
-        .map(String::trim)
-        .map(nullOnException(InetAddress::getByName))
-        .filter(Objects::nonNull)
-        .noneMatch(a -> remoteAddress.getHostName().equals(a.getHostName()));
+        .map(NoProxyUtils::resolveNoProxyHostName)
+        .flatMap(Optional::stream)
+        .noneMatch(remoteHostName::equals);
+  }
+
+  static void clearResolvedNoProxyHostCache() {
+    RESOLVED_NO_PROXY_HOST_CACHE.invalidateAll();
+  }
+
+  static long getResolvedNoProxyHostCacheSize() {
+    return RESOLVED_NO_PROXY_HOST_CACHE.size();
+  }
+
+  private static Optional<String> resolveNoProxyHostName(String noProxyHost) {
+    if (noProxyHost == null) {
+      return Optional.empty();
+    }
+    final String trimmedHost = noProxyHost.trim();
+    if (trimmedHost.isEmpty()) {
+      return Optional.empty();
+    }
+
+    final Optional<String> cachedResult = RESOLVED_NO_PROXY_HOST_CACHE.getIfPresent(trimmedHost);
+    if (cachedResult != null) {
+      return cachedResult;
+    }
+
+    final Optional<String> resolvedHostName =
+        Optional.ofNullable(nullOnException(InetAddress::getByName).apply(trimmedHost))
+            .map(InetAddress::getHostName);
+    RESOLVED_NO_PROXY_HOST_CACHE.put(trimmedHost, resolvedHostName);
+    return resolvedHostName;
   }
 }

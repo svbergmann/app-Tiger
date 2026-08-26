@@ -154,7 +154,7 @@ public class RbelHttpHeaderFacet implements RbelFacet, Map<String, RbelElement> 
   }
 
   public List<Entry<String, RbelElement>> entries() {
-    return values.getValues().stream().toList();
+    return values.entries();
   }
 
   @Override
@@ -164,14 +164,14 @@ public class RbelHttpHeaderFacet implements RbelFacet, Map<String, RbelElement> 
 
   public Stream<RbelElement> getCaseInsensitiveMatches(String key) {
     final String lowerCaseKey = key.toLowerCase();
-    return values.getValues().stream()
+    return values.stream()
         .filter(entry -> entry.getKey() != null)
         .filter(entry -> entry.getKey().toLowerCase().equals(lowerCaseKey))
         .map(Entry::getValue);
   }
 
   public boolean hasValueMatching(String headerKey, String prefix) {
-    return values.getValues().stream()
+    return values.stream()
         .filter(entry -> entry.getKey().equalsIgnoreCase(headerKey))
         .map(Entry::getValue)
         .map(RbelElement::getRawStringContent)

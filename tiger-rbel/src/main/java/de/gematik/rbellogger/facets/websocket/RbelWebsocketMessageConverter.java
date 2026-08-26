@@ -133,7 +133,7 @@ public class RbelWebsocketMessageConverter {
                 Pair.of(
                     oldEl.getKey(),
                     RbelElement.wrap(parent, oldEl.getValue().seekValue().orElse(null))))
-        .collect(RbelMultiMap.COLLECTOR);
+        .collect(RbelMultiMap.collector());
   }
 
   private RbelWebsocketFrameType getFrameType(RbelElement payloadElement) {

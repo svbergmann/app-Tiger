@@ -43,7 +43,7 @@ public class ForwardAllCallback extends AbstractFallbackRouteCallback {
     return forwardOverriddenRequest(
             req.setReceiverAddress(
                 req.isSecure(),
-                req.socketAddressFromHostHeader().getHostName(),
+                req.socketAddressFromHostHeader().getHostString(),
                 req.socketAddressFromHostHeader().getPort()))
         .getRequestOverride();
   }

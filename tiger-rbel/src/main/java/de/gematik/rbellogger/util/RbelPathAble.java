@@ -26,47 +26,47 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
-import org.jetbrains.annotations.NotNull;
+import lombok.NonNull;
 
 /**
  * Enables the usage of the RbelPathExecutor. The methods are called by the RbelPathExecutor, but
  * not only. The description however focuses on that use-case
  */
-public abstract class RbelPathAble {
+public abstract class RbelPathAble<SELF extends RbelPathAble<SELF>> {
 
-  public abstract Optional<? extends RbelPathAble> getFirst(String key);
+  public abstract Optional<SELF> getFirst(String key);
 
-  public abstract RbelPathAble getParentNode();
+  public abstract SELF getParentNode();
 
-  public abstract List<? extends RbelPathAble> getAll(String subkey);
+  public abstract List<SELF> getAll(String subkey);
 
-  public <T extends RbelPathAble> List<T> getChildNodes() {
-    return this.<T>getChildNodesStream().toList();
+  public List<SELF> getChildNodes() {
+    return getChildNodesStream().toList();
   }
 
-  public <T extends RbelPathAble> Stream<T> getChildNodesStream() {
-    return this.<T>getChildNodesWithKeyStream().map(Map.Entry::getValue);
+  public Stream<SELF> getChildNodesStream() {
+    return getChildNodesWithKeyStream().map(Map.Entry::getValue);
   }
 
-  public abstract <T extends RbelPathAble>
-      @NotNull Stream<Map.Entry<String, T>> getChildNodesWithKeyStream();
+  public abstract @NonNull Stream<Map.Entry<String, SELF>> getChildNodesWithKeyStream();
 
-  public <T extends RbelPathAble> RbelMultiMap<T> getChildNodesWithKey() {
-    return getChildNodesWithKeyStream().collect(RbelMultiMap.COLLECTOR);
+  public RbelMultiMap<SELF> getChildNodesWithKey() {
+    return getChildNodesWithKeyStream().collect(RbelMultiMap.collector());
   }
 
   public abstract Optional<String> getKey();
 
   public abstract String getRawStringContent();
 
-  public abstract List<? extends RbelPathAble> findRbelPathMembers(String rbelPath);
+  public abstract List<SELF> findRbelPathMembers(String rbelPath);
 
   /**
    * Should return the list of search-relevant nodes. Normally this would be the identity (the
    * default implementation given here), but for virtual nodes (content-nodes in a rbel-tree for
    * example) that should not be part of the actual search-tree the child-nodes should be returned.
    */
-  public List<RbelPathAble> descendToContentNodeIfAdvised() {
+  @SuppressWarnings("java:S1452")
+  public List<? extends RbelPathAble<SELF>> descendToContentNodeIfAdvised() {
     return List.of(this);
   }
 
@@ -77,10 +77,12 @@ public abstract class RbelPathAble {
 
   public String findNodePath() {
     var keyList = new LinkedList<String>();
-    for (RbelPathAble currentNode = this, parent = currentNode.getParentNode();
-        parent != null;
-        currentNode = parent, parent = parent.getParentNode()) {
+    RbelPathAble<?> currentNode = this;
+    RbelPathAble<?> parent = currentNode.getParentNode();
+    while (parent != null) {
       currentNode.findKeyInParentElement().ifPresent(keyList::addFirst);
+      currentNode = parent;
+      parent = parent.getParentNode();
     }
     return String.join(".", keyList);
   }

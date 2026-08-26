@@ -36,7 +36,20 @@ public class PortToProcessMapper {
     throw new IllegalStateException("PortToProcessMapper class");
   }
 
+  private static final long CONNECTION_SNAPSHOT_TTL_MILLIS = 1000L;
+
+  private static final SystemInfo SYSTEM_INFO = new SystemInfo();
+
+  @SuppressWarnings("java:S3077")
+  private static volatile List<InternetProtocolStats.IPConnection> connectionSnapshot = List.of();
+
+  private static volatile long connectionSnapshotTakenAt = 0L;
+  private static long lastMissRefreshAt = 0L;
+
   public static ConcurrentMap<Integer, Long> getProcessIdsForPort(int port) {
+    if (GlobalServerMap.getProcessIdToBundledServerName().isEmpty()) {
+      return GlobalServerMap.getPortToProcessId();
+    }
     getConnectionsToAndFromPort(port).forEach(PortToProcessMapper::fillMapWithValues);
     return GlobalServerMap.getPortToProcessId();
   }
@@ -50,12 +63,44 @@ public class PortToProcessMapper {
   }
 
   public static List<InternetProtocolStats.IPConnection> getConnectionsToAndFromPort(int port) {
-    SystemInfo si = new SystemInfo();
-    OperatingSystem os = si.getOperatingSystem();
-    InternetProtocolStats ipStats = os.getInternetProtocolStats();
+    var matches = matchesForPort(currentConnections(), port);
+    if (!matches.isEmpty()) {
+      return matches;
+    }
+    if (!shouldRetryAfterMiss()) {
+      return List.of();
+    }
+    return matchesForPort(refreshSnapshot(), port);
+  }
 
-    return ipStats.getConnections().stream()
+  private static synchronized boolean shouldRetryAfterMiss() {
+    long now = System.currentTimeMillis();
+    if (now - lastMissRefreshAt <= CONNECTION_SNAPSHOT_TTL_MILLIS) {
+      return false;
+    }
+    lastMissRefreshAt = now;
+    return true;
+  }
+
+  private static List<InternetProtocolStats.IPConnection> matchesForPort(
+      List<InternetProtocolStats.IPConnection> connections, int port) {
+    return connections.stream()
         .filter(c -> c.getLocalPort() == port || c.getForeignPort() == port)
         .toList();
+  }
+
+  private static List<InternetProtocolStats.IPConnection> currentConnections() {
+    if (System.currentTimeMillis() - connectionSnapshotTakenAt <= CONNECTION_SNAPSHOT_TTL_MILLIS) {
+      return connectionSnapshot;
+    }
+    return refreshSnapshot();
+  }
+
+  private static synchronized List<InternetProtocolStats.IPConnection> refreshSnapshot() {
+    OperatingSystem os = SYSTEM_INFO.getOperatingSystem();
+    InternetProtocolStats ipStats = os.getInternetProtocolStats();
+    connectionSnapshot = ipStats.getConnections();
+    connectionSnapshotTakenAt = System.currentTimeMillis();
+    return connectionSnapshot;
   }
 }

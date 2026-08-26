@@ -56,9 +56,9 @@ public class RbelMismatchNoteFacet extends RbelNoteFacet
 
   public void removeFrom(RbelElement element) {
     if (element.getParentNode() != null) {
-      element.getFacets().remove(this);
+      element.removeFacet(this);
     } else {
-      element.findElement(rbelPath).ifPresent(n -> n.getFacets().remove(this));
+      element.findElement(rbelPath).ifPresent(n -> n.removeFacet(this));
     }
   }
 

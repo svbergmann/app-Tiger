@@ -49,7 +49,7 @@ import org.jetbrains.annotations.NotNull;
 
 @Getter
 @Slf4j
-public class RbelElement extends RbelPathAble {
+public class RbelElement extends RbelPathAble<RbelElement> {
 
   static {
     RbelJexlExecutor.initialize();
@@ -264,25 +264,11 @@ public class RbelElement extends RbelPathAble {
     return this;
   }
 
+  @Override
   public @NotNull Stream<Entry<String, RbelElement>> getChildNodesWithKeyStream() {
     return facets.stream()
         .flatMap(facet -> facet.getChildElements().stream())
         .filter(e -> e.getValue() != null);
-  }
-
-  @Override
-  public List<RbelElement> getChildNodes() {
-    return super.getChildNodes();
-  }
-
-  @Override
-  public Stream<RbelElement> getChildNodesStream() {
-    return super.getChildNodesStream();
-  }
-
-  @Override
-  public RbelMultiMap<RbelElement> getChildNodesWithKey() {
-    return getChildNodesWithKeyStream().collect(RbelMultiMap.COLLECTOR);
   }
 
   public Stream<RbelElement> traverseNestedMembers() {
@@ -417,20 +403,28 @@ public class RbelElement extends RbelPathAble {
   }
 
   public void addOrReplaceFacet(RbelFacet facet) {
-    getFacet(facet.getClass()).ifPresent(facets::remove);
+    getFacet(facet.getClass()).ifPresent(this::dropFacetInstance);
     facets.add(facet);
   }
 
   public void removeFacetsOfType(Class<? extends RbelFacet> facetClass) {
     final List<RbelFacet> facetsToBeRemoved =
         facets.stream().filter(facetClass::isInstance).toList();
-    facetsToBeRemoved.forEach(facets::remove);
+    facetsToBeRemoved.forEach(this::dropFacetInstance);
     facetsToBeRemoved.forEach(facet -> facet.facetRemovedCallback(this));
   }
 
   public void removeFacet(RbelFacet facet) {
-    facets.remove(facet);
+    dropFacetInstance(facet);
     facet.facetRemovedCallback(this);
+  }
+
+  /**
+   * Identity-based on purpose: facets compare by content, so an element can hold two that are equal
+   * but distinct, and {@code Queue#remove} would drop the first rather than the one passed in.
+   */
+  private void dropFacetInstance(RbelFacet facet) {
+    facets.removeIf(candidate -> candidate == facet);
   }
 
   public Optional<RbelElement> findElement(String rbelPath) {
@@ -494,7 +488,7 @@ public class RbelElement extends RbelPathAble {
   }
 
   @Override
-  public List<RbelPathAble> descendToContentNodeIfAdvised() {
+  public List<RbelElement> descendToContentNodeIfAdvised() {
     if ((hasFacet(RbelJsonFacet.class) || hasFacet(RbelCborFacet.class))
         && hasFacet(RbelNestedFacet.class)) {
       return List.of(

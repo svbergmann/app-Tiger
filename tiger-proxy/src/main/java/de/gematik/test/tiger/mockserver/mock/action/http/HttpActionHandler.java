@@ -26,8 +26,6 @@ import static de.gematik.test.tiger.mockserver.httpclient.NettyHttpClient.REMOTE
 import static de.gematik.test.tiger.mockserver.model.HttpResponse.notFoundResponse;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
-import com.google.common.cache.Cache;
-import com.google.common.cache.CacheBuilder;
 import de.gematik.rbellogger.util.RbelInternetAddressParser;
 import de.gematik.rbellogger.util.RbelSocketAddress;
 import de.gematik.test.tiger.mockserver.configuration.MockServerConfiguration;
@@ -46,7 +44,6 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeoutException;
@@ -61,16 +58,6 @@ import lombok.val;
 @SuppressWarnings({"rawtypes", "FieldMayBeFinal"})
 @Slf4j
 public class HttpActionHandler {
-
-  private static final Cache<String, InetSocketAddress> RESOLVED_HOST_CACHE =
-      CacheBuilder.newBuilder()
-          .expireAfterWrite(Duration.ofMinutes(10))
-          .maximumSize(10_000)
-          .build();
-
-  public static void clearResolvedHostCache() {
-    RESOLVED_HOST_CACHE.invalidateAll();
-  }
 
   private final MockServerConfiguration configuration;
   private final HttpState httpStateHandler;
@@ -229,7 +216,7 @@ public class HttpActionHandler {
           .addArgument(response)
           .addArgument(request)
           .log("returning response: {} for forwarded request in json:{}");
-    } catch (Exception exception) {
+    } catch (RuntimeException exception) {
       log.error("Error while returning response", exception);
       closeChannelWithErrorMessage(responseWriter, request, exception);
     }
@@ -304,12 +291,7 @@ public class HttpActionHandler {
       return new InetSocketAddress(localInetSocketAddress.getAddress(), port);
     } else {
       String hostString = remoteSocket.getHostString();
-      try {
-        return RESOLVED_HOST_CACHE.get(
-            hostString + ":" + port, () -> getInetSocketAddress(remoteSocket, hostString, port));
-      } catch (ExecutionException e) {
-        return getInetSocketAddress(remoteSocket, hostString, port);
-      }
+      return getInetSocketAddress(remoteSocket, hostString, port);
     }
   }
 

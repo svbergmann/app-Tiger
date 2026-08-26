@@ -1,5 +1,52 @@
 # Changelog Tiger Test platform
 
+# Release 4.4.2
+
+## Breaking Changes
+
+* TGR-2201: `RbelMultiMap` — two potential breaking changes.
+
+  `getValues()` is deprecated but still returns a `Queue`, so existing code keeps compiling. It now hands out a copy
+  instead of the live internal collection: reading is unchanged, but code that changed the map by modifying the
+  returned queue has to use `put`/`remove` instead. Prefer `entries()`, `stream()`, `getAll(key)` or `keySet()`. The
+  generated `getIndex()` accessor is gone.
+
+  `equals`/`hashCode` now compare content — two maps holding the same entries in the same order are equal, where
+  previously every instance was only equal to itself. Facets embedding an `RbelMultiMap` inherit this, so equal-valued
+  facets now compare as equal. Removing a facet from an element continues to remove exactly the instance passed in.
+
+## Features
+
+* TGR-2205: Tiger Proxy now serves `/webui/getMessagesAsHtmlPage` for rendered message exports again, so tools and users can retrieve the HTML view of recorded messages directly from the WebUI API.
+
+## Bugfixes
+
+* TGR-2200: Rbellogs navigation pane was behind content when zooming in. Now it is fixed.
+* TGR-2201: Test runs that capture a lot of traffic are fast again. Requests through the Tiger Proxy had roughly doubled in
+  duration since 4.2.5; they are now back to their previous speed, and the gain grows with the number of messages a run
+  captures.
+
+  Hostnames resolved while parsing traffic are now remembered for a short while instead of being looked up for every
+  message. The new `tiger.rbel.dnsCacheTtlSeconds` sets how long, defaulting to 30 seconds - lower it if hostnames
+  change during a run, or set it to `0` to resolve every time.
+
+  Forwarded HTTP requests additionally reuse the connection to the backend across the requests of a client instead of
+  opening a new one every time. A backend connection is only ever reused by the client that opened it, and is closed
+  when that client disconnects.
+
+  Fixed a bug where two virtual hosts behind the same IP address could share a pooled connection. A keep-alive client
+  making requests to `idp.example.com` and `auth.example.com` — both pointing at the same ingress IP — could receive
+  a response intended for the other host. The connection pool now keys on the requested hostname so each virtual host
+  gets its own bucket, matching it case-insensitively so one host addressed in different spellings still shares a
+  connection.
+
+  Pooled connections are also validated against the current DNS resolution of the target hostname before being reused.
+  If Canopy has rerouted a hostname to a new IP since the connection was opened, the stale connection is closed and a
+  fresh one is opened to the new destination. The check uses the existing `tiger.rbel.dnsCacheTtlSeconds` cache, so
+  it is effectively free for any host that has been contacted before.
+* TGR-2229: Fixed logging of an exception occurring when a HTTP response did not have a body.
+
+
 # Release 4.4.1
 
 ## Features

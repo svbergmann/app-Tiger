@@ -74,7 +74,7 @@ public class TestTigerProxyBinaryModification {
   public void modifyDirectHttpTrafficWithFragmentedChunking() {
     val replayer = PcapReplayer.writeReplay(A_SAMPLE_HTTP_EXCHANGE);
     val tigerProxy =
-        replayer.replayWithDirectForwardUsing(
+        replayer.replayWithDirectReverseUsing(
             new TigerProxyConfiguration()
                 .setDirectReverseProxy(
                     DirectReverseProxyInfo.builder()

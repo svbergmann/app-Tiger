@@ -86,7 +86,7 @@ public class RbelJexlExecutor {
               .find();
 
       return textMatchResult || regexMatchResult;
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
       if (TigerJexlExecutor.isActivateJexlDebugging()) {
         log.info("Error during Text search.", e);
       }
@@ -217,7 +217,7 @@ public class RbelJexlExecutor {
   private static List<String> extractPathAndConvertToString(Object source, String rbelPath) {
     return Optional.ofNullable(source)
         .filter(RbelPathAble.class::isInstance)
-        .map(RbelPathAble.class::cast)
+        .map(o -> (RbelPathAble<?>) o)
         .map(s -> s.findRbelPathMembers(rbelPath))
         .orElse(List.of())
         .stream()

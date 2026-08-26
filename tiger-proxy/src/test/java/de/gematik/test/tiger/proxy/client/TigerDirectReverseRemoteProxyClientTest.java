@@ -50,7 +50,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 
 @ResetTigerConfiguration
 @Slf4j
-class TigerDirectForwardRemoteProxyClientTest extends AbstractNonHttpTest {
+class TigerDirectReverseRemoteProxyClientTest extends AbstractNonHttpTest {
   /*
    *  Our Testsetup:
    *

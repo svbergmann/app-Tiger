@@ -22,6 +22,7 @@ package de.gematik.test.tiger.common.util;
 
 import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.Predicate;
 
 public class ObservableQueue<T> extends ConcurrentLinkedQueue<T> {
   private final Runnable listener;
@@ -81,6 +82,15 @@ public class ObservableQueue<T> extends ConcurrentLinkedQueue<T> {
       super.clear();
       listener.run();
     }
+  }
+
+  @Override
+  public boolean removeIf(Predicate<? super T> filter) {
+    final boolean result = super.removeIf(filter);
+    if (result) {
+      listener.run();
+    }
+    return result;
   }
 
   @Override

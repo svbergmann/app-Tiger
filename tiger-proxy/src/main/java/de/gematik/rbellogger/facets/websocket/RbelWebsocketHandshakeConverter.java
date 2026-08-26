@@ -109,7 +109,7 @@ public class RbelWebsocketHandshakeConverter extends RbelConverterPlugin {
                   String name = ext.split(";", 2)[0].trim();
                   return Pair.of(name, RbelElement.wrap(result, ext));
                 })
-            .collect(RbelMultiMap.COLLECTOR);
+            .collect(RbelMultiMap.collector());
     result.addFacet(new RbelMapFacet(map));
     return result;
   }

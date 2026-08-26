@@ -20,12 +20,10 @@
  */
 package de.gematik.test.tiger.mockserver.httpclient;
 
-import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
-import javax.annotation.Nullable;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -35,52 +33,57 @@ import lombok.extern.slf4j.Slf4j;
  * It wraps a ChannelFuture that can be reused if the corresponding response future is already done.
  */
 @Getter
-@EqualsAndHashCode(exclude = {"lastUsedAt", "boundIncomingChannel"})
+@EqualsAndHashCode(exclude = "lastUsedAt")
 @RequiredArgsConstructor
 @Slf4j
 public class ReusableChannel {
 
-  private final ChannelFuture futureOutgoingChannel;
-
   /**
-   * If non-null, this channel is bound to a specific incoming channel and may only be reused by
-   * that same incoming channel (e.g., direct-forward bridges). If null, the channel is freely
-   * reusable by any incoming channel to the same remote address.
+   * The bucket this channel lives in. Carried on the channel so that eviction can hand back plain
+   * channels instead of (key, channel) tuples - several channels share one key, so they cannot be
+   * collected into a map keyed by it.
    */
-  @Nullable private final Channel boundIncomingChannel;
+  private final ReusableChannelMap.ChannelId channelId;
+
+  private final ChannelFuture futureOutgoingChannel;
 
   private long lastUsedAt = System.currentTimeMillis();
 
-  public boolean canBeReusedBy(@Nullable Channel requestingIncomingChannel) {
-    return canBeReusedBy(requestingIncomingChannel, false);
+  /**
+   * Whether this channel is free to serve another request. Ownership is not checked here: {@link
+   * ReusableChannelMap.ChannelId} already carries the incoming channel, so a pooled channel is only
+   * ever offered to the client that opened it.
+   *
+   * <p>Do not use this to decide whether a channel may be <em>evicted</em>. It is false for two
+   * opposite reasons - the channel is dead, or it is busy - and eviction has to tell them apart.
+   * Use {@link #isDead()} and {@link #hasRequestInFlight()} for that.
+   */
+  public boolean canBeReused() {
+    return !isDead() && !hasRequestInFlight();
   }
 
   /**
-   * @param requireBoundChannel if true, only a channel already bound to exactly this incoming
-   *     channel qualifies. Unbound (freely poolable) channels are rejected. This is what makes a
-   *     dedicated 1:1 bridge reuse its own in-flight channel for follow-up fragments without ever
-   *     latching onto a channel belonging to another tunnel.
+   * The socket is gone. Nothing will ever hand this channel out again, so it is pure garbage in the
+   * pool and may be dropped at any time.
+   *
+   * <p>Closing the outgoing channel does not remove it from the pool - see the note in {@code
+   * ClientBootstrapFactory.registerNewChannel} - so reclaiming these is the sweep's job alone.
    */
-  public boolean canBeReusedBy(
-      @Nullable Channel requestingIncomingChannel, boolean requireBoundChannel) {
-    if (requireBoundChannel) {
-      if (boundIncomingChannel == null || boundIncomingChannel != requestingIncomingChannel) {
-        return false;
-      }
-    } else if (boundIncomingChannel != null && boundIncomingChannel != requestingIncomingChannel) {
-      return false;
-    }
-    return canBeReused();
+  public boolean isDead() {
+    return futureOutgoingChannel.isDone() && !futureOutgoingChannel.channel().isActive();
   }
 
-  public boolean canBeReused() {
-    if (futureOutgoingChannel.isDone() && !futureOutgoingChannel.channel().isActive()) {
+  /**
+   * A request is still waiting for its response. Closing such a channel aborts a live exchange, so
+   * it is the one state eviction must respect however long the channel has been in the pool -
+   * {@code lastUsedAt} only advances on handout, so a slow backend can push it past the TTL.
+   */
+  public boolean hasRequestInFlight() {
+    if (isDead()) {
       return false;
     }
-
-    boolean shouldWait = SHOULD_I_WAIT_FOR_A_RESPONSE_BEFORE_REUSING.test(futureOutgoingChannel);
-    boolean isDone = IS_RESPONSE_DONE.test(futureOutgoingChannel);
-    return !shouldWait || isDone;
+    return SHOULD_I_WAIT_FOR_A_RESPONSE_BEFORE_REUSING.test(futureOutgoingChannel)
+        && !IS_RESPONSE_DONE.test(futureOutgoingChannel);
   }
 
   public void markAsUsed() {

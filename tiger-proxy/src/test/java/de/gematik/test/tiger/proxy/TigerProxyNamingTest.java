@@ -23,6 +23,7 @@ package de.gematik.test.tiger.proxy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.gematik.test.tiger.common.SocketHelper;
 import de.gematik.test.tiger.common.data.config.tigerproxy.TigerProxyConfiguration;
 import org.junit.jupiter.api.Test;
 
@@ -38,9 +39,11 @@ class TigerProxyNamingTest {
   @Test
   void differentConfigurationsShouldGenerateDifferentNames() {
     try (TigerProxy proxy1 =
-            new TigerProxy(TigerProxyConfiguration.builder().proxyPort(8080).build());
+            new TigerProxy(
+                TigerProxyConfiguration.builder().proxyPort(SocketHelper.findFreePort()).build());
         TigerProxy proxy2 =
-            new TigerProxy(TigerProxyConfiguration.builder().proxyPort(8081).build())) {
+            new TigerProxy(
+                TigerProxyConfiguration.builder().proxyPort(SocketHelper.findFreePort()).build())) {
 
       assertThat(proxy1.proxyName()).isNotEqualTo(proxy2.proxyName());
     }
@@ -48,8 +51,13 @@ class TigerProxyNamingTest {
 
   @Test
   void sameConfigurationShouldGenerateSameName() {
-    TigerProxyConfiguration config1 = TigerProxyConfiguration.builder().proxyPort(9090).build();
-    TigerProxyConfiguration config2 = TigerProxyConfiguration.builder().proxyPort(9090).build();
+    // one port for both: the name is derived from the configuration, so the two configs have to be
+    // identical for the names to be comparable at all
+    final int sharedPort = SocketHelper.findFreePort();
+    TigerProxyConfiguration config1 =
+        TigerProxyConfiguration.builder().proxyPort(sharedPort).build();
+    TigerProxyConfiguration config2 =
+        TigerProxyConfiguration.builder().proxyPort(sharedPort).build();
 
     String name1;
     try (TigerProxy proxy1 = new TigerProxy(config1)) {
