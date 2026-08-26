@@ -248,7 +248,10 @@ public abstract class AbstractTigerRouteCallback implements ExpectationCallback 
           .map(this::rewriteConcreteLocation)
           .map(l -> new Header(LOCATION_HEADER_KEY, l))
           .forEach(resp::withHeader);
-      log.info("Rewriting from {} to {}", locations, resp.getHeader(LOCATION_HEADER_KEY));
+      log.atInfo()
+          .addArgument(locations)
+          .addArgument(() -> resp.getHeader(LOCATION_HEADER_KEY))
+          .log("Rewriting from {} to {}");
     }
   }
 
@@ -354,23 +357,25 @@ public abstract class AbstractTigerRouteCallback implements ExpectationCallback 
     if (log.isInfoEnabled()
         && tigerProxy.getTigerProxyConfiguration().isActivateTrafficLogging()
         && !isHealthEndpointRequest(req)) {
-      log.info(
-          "Returning HTTP "
-              + resp.getStatusCode()
-              + " Response-Length: "
-              + getMessageSize(resp.getBody()));
+      log.atInfo()
+          .addArgument(resp::getStatusCode)
+          .addArgument(() -> getMessageSize(resp.getBody()))
+          .log("Returning HTTP {} Response-Length: {}");
     }
   }
 
   private static String getMessageSize(byte[] body) {
-    return FileUtils.byteCountToDisplaySize(body.length);
+    return FileUtils.byteCountToDisplaySize(body == null ? 0 : body.length);
   }
 
   public void doIncomingRequestLogging(HttpRequest req) {
     if (log.isInfoEnabled()
         && tigerProxy.getTigerProxyConfiguration().isActivateTrafficLogging()
         && !isHealthEndpointRequest(req)) {
-      log.info("Received " + req.printLogLineDescription() + " => " + printTrafficTarget(req));
+      log.atInfo()
+          .addArgument(req::printLogLineDescription)
+          .addArgument(() -> printTrafficTarget(req))
+          .log("Received {} => {}");
     }
   }
 
@@ -392,7 +397,7 @@ public abstract class AbstractTigerRouteCallback implements ExpectationCallback 
               log.atTrace()
                   .addArgument(criterion)
                   .addArgument(convertedRequest::printShortDescription)
-                  .addArgument(() -> matches)
+                  .addArgument(matches)
                   .log("Matching {} for {}: {}");
               return matches;
             });
@@ -453,13 +458,15 @@ public abstract class AbstractTigerRouteCallback implements ExpectationCallback 
     log.info(routingException.getMessage(), routingException);
 
     addServerNameForSender(request);
-    tigerProxy
-        .getMockServerToRbelConverter()
-        .convertErrorResponse(
-            request,
-            extractReceiverAddressForRequest(request),
-            routingException,
-            previousMessageUuid);
+    Optional.ofNullable(tigerProxy)
+        .map(TigerProxy::getMockServerToRbelConverter)
+        .ifPresent(
+            converter ->
+                converter.convertErrorResponse(
+                    request,
+                    extractReceiverAddressForRequest(request),
+                    routingException,
+                    previousMessageUuid));
     return new CloseChannel();
   }
 

@@ -167,7 +167,7 @@ public class PcapReplayer implements AutoCloseable {
   }
 
   @SneakyThrows
-  public TigerProxy replayWithDirectForwardUsing(TigerProxyConfiguration tigerProxyConfiguration) {
+  public TigerProxy replayWithDirectReverseUsing(TigerProxyConfiguration tigerProxyConfiguration) {
     try (val serverSocket = buildServerSocket()) {
 
       val binaryInfoBuilder =

@@ -53,7 +53,7 @@ public class RbelJsonElementToNodeConverter implements RbelElementToContentTreeN
                 entry ->
                     convertNode(entry.getValue(), entry.getKey(), context, converter).stream()
                         .map(childNode -> Pair.of(entry.getKey(), childNode)))
-            .collect(RbelMultiMap.COLLECTOR);
+            .collect(RbelMultiMap.collector());
     final RbelStrictOrderContentTreeNode result =
         new RbelStrictOrderContentTreeNode(map, el.getRawContent());
     result.setType(
@@ -94,8 +94,7 @@ public class RbelJsonElementToNodeConverter implements RbelElementToContentTreeN
       populatePrimitiveNode(value, nodes);
       return nodes;
     }
-    final List<RbelContentTreeNode> result = converter.convertNode(value, key, context);
-    return result;
+    return converter.convertNode(value, key, context);
   }
 
   private void populatePrimitiveNode(RbelElement valueElement, List<RbelContentTreeNode> nodes) {

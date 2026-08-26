@@ -298,6 +298,28 @@ class TigerWebUiControllerTest {
 
   @Test
   @ResourceLock(value = "TigerWebUiController")
+  void getMessagesAsHtmlPage_shouldReturnRenderedHtml() {
+    final var response =
+        RestAssured.given()
+            .get(getWebUiUrl() + "/getMessagesAsHtmlPage")
+            .then()
+            .statusCode(200)
+            .contentType("text/html")
+            .extract()
+            .response();
+
+    assertThat(response.asString()).isNotEmpty();
+    assertThat(parse(response.asString()).getElementsByTag("div")).isNotEmpty();
+    assertThat(response.asString())
+        .as(
+            "page should embed the filtered messages as a compressed data URL, "
+                + "just like the detached HTML export produced by the WebUI's 'Export as HTML' button")
+        .contains("id=\"__TGR_RBEL_LOG__\"")
+        .contains("window.__TGR_RBEL_LOG__=\"data:application/octet-stream;base64,");
+  }
+
+  @Test
+  @ResourceLock(value = "TigerWebUiController")
   void sortOrder_unknownValue_yieldsBadRequest() {
     RestAssured.given()
         .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=NOT_A_VALID_VALUE")

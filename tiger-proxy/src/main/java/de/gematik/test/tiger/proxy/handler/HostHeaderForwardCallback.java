@@ -56,7 +56,7 @@ public class HostHeaderForwardCallback extends AbstractFallbackRouteCallback {
             address ->
                 forwardOverriddenRequest(
                         req.setReceiverAddress(
-                            req.isSecure(), address.getHostName(), address.getPort()))
+                            req.isSecure(), address.getHostString(), address.getPort()))
                     .getRequestOverride())
         .findFirst()
         .orElse(req);

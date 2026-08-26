@@ -133,7 +133,7 @@ public class RbelAsn1Converter extends RbelConverterPlugin {
         }
 
         if (input.available() != 0) {
-          result.ifPresent(facet -> element.getFacets().remove(facet));
+          result.ifPresent(element::removeFacet);
           return Optional.empty();
         }
       }
@@ -292,9 +292,9 @@ public class RbelAsn1Converter extends RbelConverterPlugin {
           .map(RbelRootFacet.class::cast)
           .filter(f -> f.getRootFacet() instanceof RbelAsn1Facet)
           .toList()
-          .forEach(f -> nestedElement.getFacets().remove(f));
+          .forEach(nestedElement::removeFacet);
     } catch (RuntimeException e) {
-      parentNode.getFacets().remove(facet);
+      parentNode.removeFacet(facet);
     }
   }
 

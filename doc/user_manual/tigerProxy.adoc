@@ -986,6 +986,31 @@ tigerProxy:
               - "127.0.0.1"
 ----
 
+`noProxyHosts` is checked per target host (via DNS resolution of the actual destination), so entries can be hostnames or IP addresses that should bypass the forward proxy.
+
+NOTE: If a forward proxy is configured, its target address (and, if set, username/password) are logged at startup (`Forward proxy is set to ...`). Keep in mind that this log line includes the password in plain text if `username`/`password` are set.
+
+===== Using the system/environment proxy configuration
+
+Instead of specifying `hostname`/`port` explicitly, you can set `hostname` to the special value `$SYSTEM`:
+
+[source,yaml]
+----
+tigerProxy:
+    tigerProxyConfiguration:
+        forwardToProxy:
+            hostname: "$SYSTEM"
+----
+
+With this setting, Tiger determines the forward proxy to use from the environment, checking the following sources in order (the first one found wins):
+
+. JVM system properties `http.proxyHost` / `http.proxyPort` / `http.proxyUser` / `http.proxyPassword`
+. JVM system properties `https.proxyHost` / `https.proxyPort` / `https.proxyUser` / `https.proxyPassword`
+. Environment variable `http_proxy` (a full URL, optionally including credentials, e.g. `http://user:pass@proxyhost:3128`)
+. Environment variable `https_proxy` (same format as `http_proxy`)
+
+When the proxy is resolved from `http_proxy`/`https_proxy`, the environment variable `no_proxy` (a comma-separated list of hosts) is automatically merged into `noProxyHosts`.
+
 ==== directReverseProxy
 
 To enable the use of the tiger proxy for non-HTTP scenarios, you can use the option `directReverseProxy`:
@@ -1009,7 +1034,8 @@ If the optional flag `ignoreConnectionErrors` is true, no connection errors will
 
 ==== directReverseProxy modifierPlugins
 
-The `directReverseProxy` configuration supports an optional list of modifier plugins that can be used to modify traffic at the TCP layer before it is forwarded:
+The `directReverseProxy` configuration supports an optional list of modifier plugins that can be used to modify traffic at the raw TCP layer before it is forwarded.
+This is needed for non-HTTP scenarios, where the structured RBel modification mechanism (see xref:tigerProxy.adoc#_modifications[Modifications]) cannot be used, since it operates on already-parsed HTTP/JSON/XML/... messages.
 
 [source,yaml]
 ----
@@ -1020,8 +1046,52 @@ tigerProxy:
             port: 3858
             ignoreConnectionErrors: false
             modifierPlugins:
-              - pluginClass: "de.gematik.test.tiger.proxy.modifier.MyCustomModifier"
+              - name: "de.gematik.test.tiger.proxy.modifier.MyCustomModifier"
+                parameters:
+                  targetString: "foo"
+                  replacementString: "bar"
 ----
+
+Each entry is a `name` (the fully qualified, or simple, class name of the plugin) plus an optional map of `parameters`.
+
+===== How it works
+
+* On startup, Tiger scans the classpath (via `Reflections`) for all implementations of the `RbelBinaryModifierPlugin` interface and looks up the class matching `name`.
+* An instance of that class is created by deserializing the `parameters` map into it with Jackson - i.e. the plugin class is a plain POJO whose fields correspond to the `parameters` keys (bean-style getters/setters, or Lombok `@Data`).
+* For every binary message flowing through the `directReverseProxy`, the message is first parsed into an `RbelElement`, then each configured plugin is called, in the order it was registered, via:
++
+[source,java]
+----
+Optional<byte[]> modify(RbelElement target, RbelConverter rbelConverter);
+----
+* If a plugin returns an empty `Optional`, the message is passed on unchanged for that plugin.
+* If a plugin returns a `byte[]`, that becomes the new message content, which is re-parsed before being handed to the next plugin in the chain - so every plugin always sees a fully up-to-date, parsed `RbelElement`.
+* If a plugin throws an exception, it is logged as a warning and the message is passed on unmodified to the remaining plugins (a failing plugin does not abort the chain).
+
+===== Writing a custom plugin
+
+[source,java]
+----
+public class MyCustomModifier implements RbelBinaryModifierPlugin {
+
+    private String targetString;
+    private String replacementString;
+
+    // getters/setters (or use Lombok @Data) so Jackson can populate the fields from `parameters`
+
+    @Override
+    public Optional<byte[]> modify(RbelElement target, RbelConverter rbelConverter) {
+        if (target.getRawStringContent().contains(targetString)) {
+            return Optional.of(target.getRawStringContent()
+                    .replace(targetString, replacementString)
+                    .getBytes());
+        }
+        return Optional.empty();
+    }
+}
+----
+
+The class must be present on the classpath at runtime (e.g. bundled in your test-suite's own jar) and match the `name` given in the configuration.
 
 ==== directReverseProxy TCP Idle Timeout (Keep-Alive)
 
@@ -1254,6 +1324,23 @@ Default is false.
 By default, the tiger proxy will keep count of the number of requests it executes on itself (e.g., when a request is forwarded to the tiger proxy itself).
 If this counter exceeds the value of `maxLoopCounter` the request will be aborted.
 The default value is 10 (Meaning after 10 loops, the request will end in an error).
+Note: This behavior can only be customized for all Tiger Proxies.
+
+==== dnsCacheTtlSeconds
+
+To determine which server a message belongs to, Tiger resolves hostnames while parsing traffic.
+Doing that for every single message is expensive - a name that Tiger routes internally never resolves via real DNS, so each attempt waits for the operating system's resolver to time out.
+Tiger therefore remembers the outcome of a lookup, successful or not, for a short while.
+
+[source,yaml]
+----
+tiger:
+  rbel:
+    dnsCacheTtlSeconds: 30
+----
+
+The default is 30 seconds.
+Lower it if hostnames change during a test run and Tiger keeps using the previous address; set it to `0` to switch the cache off entirely and resolve every time.
 Note: This behavior can only be customized for all Tiger Proxies.
 
 === Understanding filtering
@@ -1697,9 +1784,9 @@ docker run \
   gematik1/tiger-proxy-image:latest
 ----
 
-==== Available endpoints
+=== Available endpoints
 
-Once the Standalone Proxy is running, the following endpoints are available on the admin port:
+Once the Tiger Proxy or Standalone Proxy is running, the following endpoints are available on the admin port:
 
 - **Tiger Proxy Web UI** — traffic viewer and live filter:
 `http://localhost:{adminPort}/webui`
@@ -1710,4 +1797,4 @@ Once the Standalone Proxy is running, the following endpoints are available on t
 - **OpenAPI YAML spec**:
 `http://localhost:{adminPort}/v3/api-docs.yaml`
 
-The OpenAPI spec covers all Tiger Proxy REST endpoints, including route management (`/route`), traffic modifications (`/modification`), tracing points (`/tracingpoints`), traffic push (`/traffic`), and the Web UI endpoints.
+The OpenAPI spec covers all Tiger Proxy REST endpoints, including route management (`/route`), traffic modifications (`/modification`), tracing points (`/tracingpoints`), traffic push (`/traffic`), and the Web UI endpoints, such as (`/getMessagesAsHtmlPage`) where the messages can be filtered and stored as HTML page.

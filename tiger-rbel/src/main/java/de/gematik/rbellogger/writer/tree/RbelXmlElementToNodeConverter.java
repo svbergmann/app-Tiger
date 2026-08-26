@@ -58,7 +58,7 @@ public class RbelXmlElementToNodeConverter implements RbelElementToContentTreeNo
                 entry ->
                     convertNode(context, converter, entry).stream()
                         .map(childNode -> Pair.of(entry.getKey(), childNode)))
-            .collect(RbelMultiMap.COLLECTOR);
+            .collect(RbelMultiMap.collector());
     final RbelStrictOrderContentTreeNode result =
         new RbelStrictOrderContentTreeNode(map, el.getRawContent());
     result.setType(

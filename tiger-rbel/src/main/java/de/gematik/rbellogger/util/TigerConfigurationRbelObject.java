@@ -20,7 +20,6 @@
  */
 package de.gematik.rbellogger.util;
 
-import de.gematik.rbellogger.data.RbelMultiMap;
 import de.gematik.test.tiger.common.config.TigerConfigurationKey;
 import de.gematik.test.tiger.common.config.TigerConfigurationLoader;
 import java.util.HashMap;
@@ -30,12 +29,13 @@ import java.util.Optional;
 import java.util.stream.Stream;
 import lombok.AccessLevel;
 import lombok.EqualsAndHashCode;
+import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.tuple.Pair;
 
 @RequiredArgsConstructor(access = AccessLevel.PRIVATE)
 @EqualsAndHashCode(callSuper = false)
-class TigerConfigurationRbelObject extends RbelPathAble {
+class TigerConfigurationRbelObject extends RbelPathAble<TigerConfigurationRbelObject> {
   private final StaticTigerConfiguration configuration;
   private final TigerConfigurationKey key;
 
@@ -49,8 +49,8 @@ class TigerConfigurationRbelObject extends RbelPathAble {
   }
 
   @Override
-  public Optional<RbelPathAble> getFirst(String key) {
-    return getAll(key).stream().map(RbelPathAble.class::cast).findFirst();
+  public Optional<TigerConfigurationRbelObject> getFirst(String key) {
+    return getAll(key).stream().findFirst();
   }
 
   @Override
@@ -81,22 +81,8 @@ class TigerConfigurationRbelObject extends RbelPathAble {
   }
 
   @Override
-  public Stream<TigerConfigurationRbelObject> getChildNodesStream() {
-    return super.getChildNodesStream();
-  }
-
-  @Override
-  public List<TigerConfigurationRbelObject> getChildNodes() {
-    return super.getChildNodes();
-  }
-
-  @Override
-  public RbelMultiMap<TigerConfigurationRbelObject> getChildNodesWithKey() {
-    return super.getChildNodesWithKey();
-  }
-
-  @Override
-  public Stream<Map.Entry<String, TigerConfigurationRbelObject>> getChildNodesWithKeyStream() {
+  public @NonNull Stream<Map.Entry<String, TigerConfigurationRbelObject>>
+      getChildNodesWithKeyStream() {
     return configuration.entrySet().stream()
         .filter(e -> e.getKey().isBelow(key))
         .map(

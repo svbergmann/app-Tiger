@@ -292,7 +292,7 @@ public class RbelContextDecorator {
     public final RbelElement body;
   }
 
-  public static String forceStringConvert(RbelPathAble obj) {
+  public static String forceStringConvert(RbelPathAble<?> obj) {
     if (obj.getFirst(CONTENT).isPresent()) {
       return obj.getFirst(CONTENT).map(RbelContextDecorator::forceStringConvert).orElse("");
     } else if (obj instanceof RbelElement rbelElement

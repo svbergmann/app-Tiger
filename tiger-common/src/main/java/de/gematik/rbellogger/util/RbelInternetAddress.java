@@ -20,16 +20,67 @@
  */
 package de.gematik.rbellogger.util;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import de.gematik.test.tiger.common.config.TigerConfigurationKeys;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.time.Duration;
 import java.util.Optional;
+import java.util.concurrent.ExecutionException;
 import lombok.AllArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 @Value
 @AllArgsConstructor
+@Slf4j
 public class RbelInternetAddress {
+
+  /**
+   * Caches the outcome (success or failure) of resolving a bare hostname via {@link
+   * InetAddress#getByName}. Only the actual DNS-lookup branch of {@link #toInetAddress()} is cached
+   * - when an IP address is already known, converting it back to an {@link InetAddress} is a local,
+   * non-blocking operation and does not need caching.
+   *
+   * <p>Both outcomes are cached, including failures: a hostname that Tiger routes internally (like
+   * a mesh peer's symbolic name) will never resolve via real DNS, so every uncached call pays a
+   * full OS resolver timeout for a lookup that fails the same way every time.
+   *
+   * <p>The TTL comes from {@code tiger.rbel.dnsCacheTtlSeconds} and defaults to 30s, deliberately
+   * shorter than the 10 minutes this started out with: CANOPY ships a 30s DNS TTL, and holding a
+   * resolution twenty times longer than that means a host which moves mid-run keeps resolving to
+   * its old address. Set it to {@code 0} to disable caching.
+   *
+   * <p>Built on first use rather than at class-initialisation time, because the configuration is
+   * not necessarily loaded yet when this class is first touched.
+   */
+  static Cache<String, Optional<InetAddress>> getResolvedHostnameCache() {
+    return CacheHolder.INSTANCE;
+  }
+
+  private static final class CacheHolder {
+    private CacheHolder() {}
+
+    static final Cache<String, Optional<InetAddress>> INSTANCE = build();
+
+    private static Cache<String, Optional<InetAddress>> build() {
+      int ttlSeconds =
+          Math.max(0, TigerConfigurationKeys.RBEL_DNS_CACHE_TTL_SECONDS.getValueOrDefault());
+      return CacheBuilder.newBuilder()
+          .expireAfterWrite(Duration.ofSeconds(ttlSeconds))
+          .maximumSize(10_000)
+          .recordStats()
+          .build();
+    }
+  }
+
+  public static void clearResolvedHostnameCache() {
+    getResolvedHostnameCache().invalidateAll();
+  }
+
   String hostname;
   byte[] ipAddress;
 
@@ -61,13 +112,30 @@ public class RbelInternetAddress {
   }
 
   public Optional<InetAddress> toInetAddress() {
-    try {
-      if (ipAddress != null) {
+    if (ipAddress != null) {
+      try {
         return Optional.of(InetAddress.getByAddress(ipAddress));
-      } else {
-        return Optional.ofNullable(InetAddress.getByName(hostname));
+      } catch (UnknownHostException e) {
+        return Optional.empty();
       }
-    } catch (Exception e) {
+    }
+    if (hostname == null) {
+      // InetAddress.getByName(null) is a fast, local special case (loopback address, no network
+      // I/O) - nothing to cache.
+      return resolveHostname();
+    }
+    try {
+      return getResolvedHostnameCache().get(hostname, this::resolveHostname);
+    } catch (ExecutionException e) {
+      log.trace("Unexpected error resolving hostname '{}'", hostname, e);
+      return Optional.empty();
+    }
+  }
+
+  private Optional<InetAddress> resolveHostname() {
+    try {
+      return Optional.ofNullable(InetAddress.getByName(hostname));
+    } catch (UnknownHostException e) {
       return Optional.empty();
     }
   }

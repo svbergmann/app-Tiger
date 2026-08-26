@@ -45,6 +45,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.ObjLongConsumer;
@@ -366,6 +368,127 @@ public class TigerWebUiController implements ApplicationContextAware {
     result.setTotalFiltered(result.getMessages().size());
 
     return result;
+  }
+
+  @GetMapping(value = "/getMessagesAsHtmlPage", produces = MediaType.TEXT_HTML_VALUE)
+  public String getMessagesAsHtmlPage(
+      @RequestParam(name = "filterRbelPath", required = false) String filterRbelPath) {
+
+    final var parsedMessages = resolveMessages(MessageSortOrder.TIMESTAMP);
+    final var total = parsedMessages.size();
+    final var filter = GetMessagesFilterScrollableDto.builder().rbelPath(filterRbelPath).build();
+    final var hash = messageHash();
+
+    final var messagesWithHtml = new GetMessagesWithHtmlScrollableDto();
+    messagesWithHtml.setFromOffset(0);
+    messagesWithHtml.setToOffsetExcluding(total);
+    messagesWithHtml.setTotal(total);
+    messagesWithHtml.setFilter(filter);
+    messagesWithHtml.setHash(hash);
+
+    val renderingToolkit = new RbelHtmlRenderingToolkit(renderer);
+    messagesWithHtml.setMessages(
+        filterMessages(parsedMessages.stream(), filterRbelPath)
+            .map(
+                msg ->
+                    HtmlMessageScrollableDto.builder()
+                        .content(renderingToolkit.convertMessage(msg).render())
+                        .uuid(msg.getUuid())
+                        .sequenceNumber(getElementSequenceNumber(msg))
+                        .build())
+            .toList());
+    addOffsetToMessages(0, messagesWithHtml.getMessages(), HtmlMessageScrollableDto::setOffset);
+    messagesWithHtml.setTotalFiltered(messagesWithHtml.getMessages().size());
+
+    final var messagesWithMeta = new GetMessagesWithMetaScrollableDto();
+    messagesWithMeta.setTotal(total);
+    messagesWithMeta.setFilter(filter);
+    messagesWithMeta.setHash(hash);
+    messagesWithMeta.setMessages(
+        filterMessages(parsedMessages.stream(), filterRbelPath)
+            .map(MetaMessageScrollableDto::createFrom)
+            .toList());
+    addOffsetToMessages(0, messagesWithMeta.getMessages(), MetaMessageScrollableDto::setOffset);
+    messagesWithMeta.setTotalFiltered(messagesWithMeta.getMessages().size());
+
+    return renderDetachedHtmlPage(messagesWithHtml, messagesWithMeta);
+  }
+
+  /**
+   * Renders the same self-contained HTML page that the "Export as HTML" button in the Tiger
+   * Proxy WebUI produces: the detached Vue frontend bundle with the filtered messages embedded as
+   * a compressed, base64-encoded payload (mirrors HtmlExporter.ts in the frontend).
+   */
+  private String renderDetachedHtmlPage(
+      GetMessagesWithHtmlScrollableDto messagesWithHtml,
+      GetMessagesWithMetaScrollableDto messagesWithMeta) {
+    try {
+      final var payload = new LinkedHashMap<String, Object>();
+      payload.put("messagesWithHtml", messagesWithHtml);
+      payload.put("messagesWithMeta", messagesWithMeta);
+      final String json = passwordHidingMapper.writeValueAsString(payload);
+      final String dataUrl =
+          "data:application/octet-stream;base64,"
+              + Base64.getEncoder().encodeToString(deflate(json.getBytes(StandardCharsets.UTF_8)));
+
+      return loadDetachedHtmlTemplate()
+          .replace(
+              DETACHED_LOG_PLACEHOLDER,
+              "<script id=\"__TGR_RBEL_LOG__\" type=\"text/javascript\">window.__TGR_RBEL_LOG__=\""
+                  + dataUrl
+                  + "\"</script>");
+    } catch (IOException e) {
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, "Failed to render detached HTML export page", e);
+    }
+  }
+
+  private static final String DETACHED_LOG_PLACEHOLDER =
+      "<script id=\"__TGR_RBEL_LOG__\" type=\"text/javascript\"></script>";
+  private static final String DETACHED_HTML_TEMPLATE_FALLBACK =
+      """
+      <!doctype html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <title>Tiger Proxy Messages</title>
+      </head>
+      <body>
+        <div id="app"></div>
+      """
+          + DETACHED_LOG_PLACEHOLDER
+          + """
+      </body>
+      </html>
+      """;
+
+  private String loadDetachedHtmlTemplate() throws IOException {
+    final var resource = new ClassPathResource("/detached-webui/index.html");
+    if (!resource.exists()) {
+      log.warn(
+          "Detached WebUI template {} is missing on classpath, using built-in fallback template.",
+          resource.getPath());
+      return DETACHED_HTML_TEMPLATE_FALLBACK;
+    }
+    try (var inputStream = resource.getInputStream()) {
+      return new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+    }
+  }
+
+  private byte[] deflate(byte[] input) throws IOException {
+    final var deflater = new java.util.zip.Deflater(java.util.zip.Deflater.DEFAULT_COMPRESSION, true);
+    deflater.setInput(input);
+    deflater.finish();
+    try (var out = new java.io.ByteArrayOutputStream(input.length)) {
+      final byte[] buffer = new byte[8 * (int) KB];
+      while (!deflater.finished()) {
+        final int n = deflater.deflate(buffer);
+        out.write(buffer, 0, n);
+      }
+      return out.toByteArray();
+    } finally {
+      deflater.end();
+    }
   }
 
   @GetMapping(value = "/getMessagesWithMeta", produces = MediaType.APPLICATION_JSON_VALUE)

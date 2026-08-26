@@ -42,7 +42,7 @@ import org.awaitility.core.ConditionTimeoutException;
 import org.junit.jupiter.api.Test;
 
 @Slf4j
-public class TestDirectForwardProxyWithRaceCondition {
+public class TestDirectReverseProxyWithRaceCondition {
 
   @SneakyThrows
   @Test
@@ -50,7 +50,7 @@ public class TestDirectForwardProxyWithRaceCondition {
     try (final PcapReplayer replayer =
         new PcapReplayer("src/test/resources/stapelsignatur_log.pcapng", 50294, 7001, false)
             .readReplay()) {
-      val tigerProxy = replayer.replayWithDirectForwardUsing(new TigerProxyConfiguration());
+      val tigerProxy = replayer.replayWithDirectReverseUsing(new TigerProxyConfiguration());
 
       tigerProxy.waitForAllCurrentMessagesToBeParsed();
 
@@ -68,7 +68,7 @@ public class TestDirectForwardProxyWithRaceCondition {
         new PcapReplayer("src/test/resources/sicctHandshakeDecryptedPcap.json", 53406, 4741, false)
             .readReplay()) {
       val tigerProxy =
-          replayer.replayWithDirectForwardUsing(
+          replayer.replayWithDirectReverseUsing(
               new TigerProxyConfiguration().setActivateRbelParsingFor(List.of("sicct")));
 
       tigerProxy.waitForAllCurrentMessagesToBeParsed();
@@ -82,7 +82,7 @@ public class TestDirectForwardProxyWithRaceCondition {
     try (final PcapReplayer replayer =
         new PcapReplayer("src/test/resources/stapelsignatur_log.pcapng", 53335, 80, false)
             .readReplay()) {
-      val tigerProxy = replayer.replayWithDirectForwardUsing(new TigerProxyConfiguration());
+      val tigerProxy = replayer.replayWithDirectReverseUsing(new TigerProxyConfiguration());
 
       final String html = RbelHtmlRenderer.render(tigerProxy.getRbelMessagesList());
       Files.write(new File("target/pcapReplayHttp.html").toPath(), html.getBytes());

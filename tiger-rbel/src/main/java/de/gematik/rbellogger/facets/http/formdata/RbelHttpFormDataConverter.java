@@ -42,7 +42,7 @@ public class RbelHttpFormDataConverter extends RbelConverterPlugin {
               .map(
                   paramList ->
                       Pair.of(paramList[0], converter.convertElement(paramList[1], rbelElement)))
-              .collect(RbelMultiMap.COLLECTOR);
+              .collect(RbelMultiMap.collector());
 
       rbelElement.addFacet(RbelHttpFormDataFacet.builder().formDataMap(formDataMap).build());
     }

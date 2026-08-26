@@ -98,7 +98,7 @@ public class TigerProxy extends AbstractTigerProxy implements AutoCloseable, Rbe
    */
   @Getter private final UUID healthEndpointRequestUuid = UUID.randomUUID();
 
-  @EqualsAndHashCode.Exclude private MockServer mockServer;
+  @Getter @EqualsAndHashCode.Exclude private MockServer mockServer;
   private TigerPkiIdentity serverRootCa;
 
   public TigerProxy(final TigerProxyConfiguration configuration) {
@@ -250,7 +250,7 @@ public class TigerProxy extends AbstractTigerProxy implements AutoCloseable, Rbe
   private MockServer spawnDirectInverseTigerProxy(MockServerConfiguration mockServerConfiguration) {
     if (mockServerConfiguration.proxyConfiguration() != null) {
       throw new TigerProxyStartupException(
-          "DirectForwardProxy configured with additional forwardProxy: Not possible! (forwardProxy"
+          "DirectReverseProxy configured with additional forwardProxy: Not possible! (forwardProxy"
               + " is always HTTP!)");
     }
     mockServerConfiguration.directForwarding(

@@ -115,8 +115,7 @@ public class ClientBootstrapFactory {
       @Nullable ChannelFutureListener onReuseListener,
       @Nullable Long timeoutInMilliseconds,
       @Nullable EventLoopGroup eventLoopGroup,
-      boolean forceNewChannel,
-      boolean dedicatedChannel) {
+      boolean forceNewChannel) {
 
     val resolvedParams = resolveChannelParameters(requestInfo, incomingChannel, remoteAddress);
     val explicitOutgoingChannel = requestInfo != null ? requestInfo.getOutgoingChannel() : null;
@@ -131,9 +130,7 @@ public class ClientBootstrapFactory {
     val channelToReuse =
         forceNewChannel
             ? null
-            : Optional.ofNullable(requestInfo)
-                .map(info -> channelMap.getChannelToReuse(info, dedicatedChannel))
-                .orElse(null);
+            : Optional.ofNullable(requestInfo).map(channelMap::getChannelToReuse).orElse(null);
     if (channelToReuse != null) {
       return reuseExistingChannel(
           channelToReuse, resolvedParams.incomingChannel(), responseFuture, onReuseListener);
@@ -154,13 +151,17 @@ public class ClientBootstrapFactory {
         config,
         resolvedParams.incomingChannel(),
         resolvedParams.remoteAddress(),
-        onCreationListener,
-        dedicatedChannel);
+        onCreationListener);
   }
 
   /** Remove a channel from the pool (e.g., when it fails during reuse). */
   public void removeChannelFromPool(Channel outgoingChannel) {
     channelMap.remove(outgoingChannel);
+  }
+
+  /** Closes every backend channel this client connection opened, once the client is gone. */
+  public void closeChannelsOpenedFor(Channel incomingChannel) {
+    channelMap.removeAllFor(incomingChannel);
   }
 
   private record ResolvedChannelParams(Channel incomingChannel, InetSocketAddress remoteAddress) {}
@@ -193,9 +194,6 @@ public class ClientBootstrapFactory {
 
                 future.channel().attr(RESPONSE_FUTURE).set(responseFuture);
 
-                // Transfer ownership: previous incoming must NOT close the outgoing on disconnect,
-                // otherwise the newly bound incoming would see a dead channel. See
-                // HttpRequestHandler.channelInactive which closes attr(OUTGOING_CHANNEL).
                 Channel previousIncoming = future.channel().attr(INCOMING_CHANNEL).get();
                 if (previousIncoming != null && previousIncoming != incomingChannel) {
                   previousIncoming.attr(BinaryBridgeHandler.OUTGOING_CHANNEL).set(null);
@@ -216,24 +214,18 @@ public class ClientBootstrapFactory {
       ChannelConfig config,
       Channel incomingChannel,
       InetSocketAddress remoteAddress,
-      @Nullable ChannelFutureListener onCreationListener,
-      boolean dedicatedChannel) {
+      @Nullable ChannelFutureListener onCreationListener) {
     log.trace("creating a new channel");
 
     val timeout = resolveTimeout(config.timeoutInMilliseconds());
     val effectiveEventLoopGroup =
         config.eventLoopGroup() != null ? config.eventLoopGroup() : eventLoop;
 
-    var channelFuture =
-        createBootstrap(config, incomingChannel, remoteAddress, timeout, effectiveEventLoopGroup)
-            .connect(remoteAddress);
+    val bootstrap =
+        createBootstrap(config, incomingChannel, remoteAddress, timeout, effectiveEventLoopGroup);
+    var channelFuture = bootstrap.connect(remoteAddress);
     registerNewChannel(
-        requestInfo,
-        channelFuture,
-        incomingChannel,
-        remoteAddress,
-        onCreationListener,
-        dedicatedChannel);
+        channelFuture, requestInfo, incomingChannel, remoteAddress, onCreationListener);
 
     return channelFuture;
   }
@@ -296,15 +288,17 @@ public class ClientBootstrapFactory {
   }
 
   private void registerNewChannel(
-      RequestInfo<?> requestInfo,
       ChannelFuture channelFuture,
+      @Nullable RequestInfo<?> requestInfo,
       Channel incomingChannel,
       InetSocketAddress remoteAddress,
-      @Nullable ChannelFutureListener onCreationListener,
-      boolean dedicatedChannel) {
+      @Nullable ChannelFutureListener onCreationListener) {
 
-    Channel boundIncomingChannel = requestInfo == null || dedicatedChannel ? incomingChannel : null;
-    channelMap.addChannel(ChannelId.from(remoteAddress), channelFuture, boundIncomingChannel);
+    val channelId =
+        requestInfo != null
+            ? ChannelId.from(requestInfo)
+            : ChannelId.from(incomingChannel, remoteAddress);
+    channelMap.addChannel(channelId, channelFuture);
 
     if (onCreationListener != null) {
       channelFuture.addListener(onCreationListener);

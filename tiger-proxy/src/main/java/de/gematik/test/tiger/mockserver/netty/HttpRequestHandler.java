@@ -31,6 +31,7 @@ import static io.netty.handler.codec.http.HttpResponseStatus.*;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.gematik.test.tiger.mockserver.configuration.MockServerConfiguration;
+import de.gematik.test.tiger.mockserver.httpclient.NettyHttpClient;
 import de.gematik.test.tiger.mockserver.mock.HttpState;
 import de.gematik.test.tiger.mockserver.mock.action.http.HttpActionHandler;
 import de.gematik.test.tiger.mockserver.model.HttpRequest;
@@ -95,7 +96,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<HttpRequest>
               request, responseWriter, ctx, isProxyingRequest(ctx), false);
         }
       }
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       log.error("exception processing {}", request, ex);
       responseWriter.writeResponse(
           request,
@@ -156,8 +157,24 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<HttpRequest>
     closeOnFlush(ctx.channel());
   }
 
+  /**
+   * Closes the backend connection this client opened (TGR-2182). No ownership check is needed: the
+   * pool key carries the incoming channel, so a reachable outgoing channel was opened for this
+   * client and cannot have been handed to another. Once the client is gone it is unreachable, and
+   * leaving it open would leak the socket until the pool TTL expires.
+   */
+  @Override
   public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+    // OUTGOING_CHANNEL only ever holds the last backend channel this client used - it is
+    // single-valued and overwritten on every connect and reuse. Asking the pool instead reaches
+    // all of them, since it keys on the incoming channel: two destinations sit in two buckets, and
+    // concurrent requests to one destination open extra channels because an in-flight channel
+    // cannot be reused. The attribute is still closed for the paths that never enter the pool.
     Optional.ofNullable(ctx.channel().attr(OUTGOING_CHANNEL).get()).ifPresent(Channel::close);
+    Optional.ofNullable(httpActionHandler)
+        .map(HttpActionHandler::getHttpClient)
+        .map(NettyHttpClient::getClientBootstrapFactory)
+        .ifPresent(factory -> factory.closeChannelsOpenedFor(ctx.channel()));
     ctx.fireChannelInactive();
   }
 }

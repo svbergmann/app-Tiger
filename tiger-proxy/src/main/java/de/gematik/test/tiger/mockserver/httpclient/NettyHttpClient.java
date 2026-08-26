@@ -139,7 +139,6 @@ public class NettyHttpClient {
         .onCreationListener(onCreationListener)
         .onReuseListener(onReuseListener)
         .forceNewChannel(forceNewChannel)
-        .dedicatedChannel(requestInfo.getDataToSend().isWebsocketHandshake())
         .connectToChannel();
 
     responseFuture.whenComplete(
@@ -307,7 +306,6 @@ public class NettyHttpClient {
           .errorIfChannelClosedWithoutResponse(false)
           .onReuseListener(onCreateAndReuseListener)
           .onCreationListener(onCreateAndReuseListener)
-          .dedicatedChannel(true)
           .connectToChannel();
 
       responseFuture.whenComplete(

@@ -34,6 +34,7 @@ import de.gematik.rbellogger.data.core.*;
 import de.gematik.rbellogger.data.core.RbelNoteFacet.NoteStyling;
 import de.gematik.rbellogger.exceptions.RbelConversionException;
 import de.gematik.rbellogger.util.RbelContent;
+import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -67,7 +68,7 @@ public class RbelHttpResponseConverter extends RbelConverterPlugin {
     log.atTrace().log(() -> "Decoding data with gzip");
     try (final InputStream gzipInput = new GZIPInputStream(bytes.toInputStream())) {
       return RbelContent.from(gzipInput);
-    } catch (Exception e) {
+    } catch (IOException | RuntimeException e) {
       throw new RbelConversionException("Error while decoding gzip content", e);
     }
   }
@@ -76,8 +77,8 @@ public class RbelHttpResponseConverter extends RbelConverterPlugin {
     log.atTrace().log(() -> "Decoding data with deflate");
     try (final InputStream inflater = new InflaterInputStream(bytes.toInputStream())) {
       return RbelContent.from(inflater);
-    } catch (Exception e) {
-      throw new RbelConversionException("Error while decoding gzip content", e);
+    } catch (IOException | RuntimeException e) {
+      throw new RbelConversionException("Error while decoding deflate content", e);
     }
   }
 
@@ -236,7 +237,7 @@ public class RbelHttpResponseConverter extends RbelConverterPlugin {
     final RbelMultiMap<RbelElement> headerMap =
         headerList.stream()
             .map(line -> parseStringToKeyValuePair(line, converter, headerElement))
-            .collect(RbelMultiMap.COLLECTOR);
+            .collect(RbelMultiMap.collector());
     headerElement.addFacet(new RbelHttpHeaderFacet(headerMap));
 
     return headerElement;

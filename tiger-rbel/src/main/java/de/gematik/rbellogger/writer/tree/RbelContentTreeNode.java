@@ -34,10 +34,11 @@ import java.util.*;
 import java.util.stream.Stream;
 import javax.annotation.Nullable;
 import lombok.Getter;
+import lombok.NonNull;
 import lombok.Setter;
 import org.apache.commons.lang3.tuple.Pair;
 
-public class RbelContentTreeNode extends RbelPathAble {
+public class RbelContentTreeNode extends RbelPathAble<RbelContentTreeNode> {
 
   private RbelMultiMap<RbelContentTreeNode> childNodes;
   private final Map<String, String> attributeMap = new HashMap<>();
@@ -71,7 +72,7 @@ public class RbelContentTreeNode extends RbelPathAble {
       this.setChildNodes(new RbelMultiMap<>());
     } else {
       this.childNodes = childNodes;
-      this.childNodes.getValues().forEach((e) -> e.getValue().setParentNode(this));
+      this.childNodes.entries().forEach(e -> e.getValue().setParentNode(this));
     }
   }
 
@@ -115,7 +116,7 @@ public class RbelContentTreeNode extends RbelPathAble {
       childNodes =
           childNodes.stream()
               .map(e -> e.getKey().equals(key) ? Pair.of(key, newChildNode) : e)
-              .collect(RbelMultiMap.COLLECTOR);
+              .collect(RbelMultiMap.collector());
     } else {
       childNodes.put(key, newChildNode);
     }
@@ -159,7 +160,7 @@ public class RbelContentTreeNode extends RbelPathAble {
   }
 
   @Override
-  public Optional<RbelPathAble> getFirst(String key) {
+  public Optional<RbelContentTreeNode> getFirst(String key) {
     return Optional.ofNullable(childNodes.get(key));
   }
 
@@ -169,22 +170,12 @@ public class RbelContentTreeNode extends RbelPathAble {
   }
 
   @Override
-  public Stream<RbelContentTreeNode> getChildNodesStream() {
-    return super.getChildNodesStream();
-  }
-
-  @Override
-  public List<RbelContentTreeNode> getChildNodes() {
-    return super.getChildNodes();
-  }
-
-  @Override
   public RbelMultiMap<RbelContentTreeNode> getChildNodesWithKey() {
     return childNodes;
   }
 
   @Override
-  public Stream<Map.Entry<String, RbelContentTreeNode>> getChildNodesWithKeyStream() {
+  public @NonNull Stream<Map.Entry<String, RbelContentTreeNode>> getChildNodesWithKeyStream() {
     return childNodes.stream();
   }
 
@@ -294,11 +285,11 @@ public class RbelContentTreeNode extends RbelPathAble {
     this.setParentNode(formerParent);
 
     formerKey.ifPresentOrElse(
-        key -> {
-          this.setKey(key);
+        k -> {
+          this.setKey(k);
           if (formerParent != null) {
-            formerParent.childNodes.remove(key);
-            formerParent.childNodes.put(key, this);
+            formerParent.childNodes.remove(k);
+            formerParent.childNodes.put(k, this);
           }
         },
         () -> setKey(null));

@@ -111,7 +111,11 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
     if (isNotBlank(host)) {
       val secure = Boolean.TRUE.equals(isSecure);
       val hostPort = parseHostAndPort(host, computePort(port, secure));
-      return setReceiverAddress(hostPort.getHostName(), hostPort.getPort(), secure ? HTTPS : HTTP);
+      // getHostString, never getHostName: for a literal IP the latter reverse-resolves to a name
+      // that then has to be resolved back to an IP on connect. See
+      // doc/adr/024_hoststring_over_hostname.md.
+      return setReceiverAddress(
+          hostPort.getHostString(), hostPort.getPort(), secure ? HTTPS : HTTP);
     }
     return this;
   }
@@ -274,6 +278,22 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
                       + NEW_LINE
                       + this);
             });
+  }
+
+  /**
+   * The host this request was addressed to, as written. Unlike {@link
+   * #optionalSocketAddressFromHostHeader()} this never builds an {@link InetSocketAddress}, because
+   * that resolves the name and this sits on the request hot path.
+   */
+  public Optional<String> requestedHostname() {
+    if (receiverAddress != null && isNotBlank(receiverAddress.getHost())) {
+      return Optional.of(receiverAddress.getHost());
+    }
+    val hostHeader = getFirstHeader(HOST.toString());
+    if (isNotBlank(hostHeader)) {
+      return Optional.of(HostAndPort.fromString(hostHeader).getHost());
+    }
+    return Optional.empty();
   }
 
   /**
