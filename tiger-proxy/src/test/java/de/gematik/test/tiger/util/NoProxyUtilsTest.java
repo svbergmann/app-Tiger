@@ -21,6 +21,10 @@
 package de.gematik.test.tiger.util;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.google.common.cache.Cache;
 import java.net.InetAddress;
@@ -38,7 +42,8 @@ class NoProxyUtilsTest {
 
   @Test
   void shouldUseProxyForHost_shouldUseProxyWhenNoProxyHostsIsNull() throws Exception {
-    assertThat(NoProxyUtils.shouldUseProxyForHost(InetAddress.getByName("localhost"), null)).isTrue();
+    assertThat(NoProxyUtils.shouldUseProxyForHost(InetAddress.getByName("localhost"), null))
+        .isTrue();
   }
 
   @Test
@@ -66,6 +71,32 @@ class NoProxyUtilsTest {
 
     assertThat(NoProxyUtils.shouldUseProxyForHost(remoteAddress, List.of("localhost"))).isFalse();
     assertThat(getNoProxyResolutionCache().size()).isEqualTo(1);
+  }
+
+  @Test
+  void unresolvableNoProxyHostsShouldNotBeRememberedAsUnresolvable() throws Exception {
+    NoProxyUtils.shouldUseProxyForHost(
+        InetAddress.getByName("localhost"), List.of("notresolvable.invalid"));
+
+    assertThat(getNoProxyResolutionCache().size())
+        .as("only successful resolutions belong in the cache, so the next call tries again")
+        .isZero();
+  }
+
+  @Test
+  void theRemoteAddressShouldNotBeReverseResolvedWhenThereIsNothingToCompareItTo() {
+    final InetAddress remoteAddress = mock(InetAddress.class);
+    // stubbed so that calling it is caught by the verify below rather than by an incidental NPE
+    when(remoteAddress.getHostName()).thenReturn("some.host.example.com");
+
+    assertThat(NoProxyUtils.shouldUseProxyForHost(remoteAddress, List.of()))
+        .as("an empty list means nothing bypasses the proxy")
+        .isTrue();
+    assertThat(NoProxyUtils.shouldUseProxyForHost(remoteAddress, List.of("notresolvable.invalid")))
+        .as("nor does a list whose only entry does not resolve")
+        .isTrue();
+
+    verify(remoteAddress, never()).getHostName();
   }
 
   @SuppressWarnings("unchecked")

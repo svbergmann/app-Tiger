@@ -22,6 +22,7 @@ package de.gematik.test.tiger.playwright.workflowui.report;
 
 import static com.microsoft.playwright.assertions.PlaywrightAssertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.microsoft.playwright.Browser;
@@ -33,6 +34,7 @@ import com.microsoft.playwright.Playwright;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.TestInstance.Lifecycle;
@@ -44,6 +46,8 @@ class SerenityReportTest {
   private static final String SCENARIO_TABLE = "#tests #scenario-results";
   private static final String SCENARIO_FIRST_ROW_RESULT_CELL = "#tests #scenario-results tbody tr:first-child td.test-result-cell";
   private static final String RESULT_HEADER_TH = "#tests #scenario-results thead th:has-text('Result')";
+  private static final String STARTED_HEADER_TH = "#tests #scenario-results thead th:has-text('Started')";
+  private static final String SCENARIO_ROWS = "#tests #scenario-results tbody tr";
 
   private Playwright playwright;
   private Browser browser;
@@ -93,10 +97,10 @@ class SerenityReportTest {
         page.locator("h1,h2,h3,h4,h5,h6")
             .filter(new Locator.FilterOptions().setHasText("Key Statistics"))
             .first();
-    assertTrue(keyStatisticsHeading.isVisible(), "Could not find 'Key Statistics' heading.");
+    assertThat(keyStatisticsHeading).isVisible();
 
     Locator keyStatisticsTable = keyStatisticsHeading.locator("xpath=following::table[1]");
-    assertTrue(keyStatisticsTable.isVisible(), "Could not find table below 'Key Statistics' heading.");
+    assertThat(keyStatisticsTable).isVisible();
     assertKeyStatisticsValues(keyStatisticsTable);
   }
 
@@ -104,8 +108,7 @@ class SerenityReportTest {
   void shouldHaveValueForEachKeyStatisticsEntryInTestResults() {
     openTestResultsTab();
     Locator keyStatisticsTable = page.locator("#tests h3:has-text('Key Statistics') + div table").first();
-    assertTrue(
-        keyStatisticsTable.count() > 0, "Could not find Key Statistics table in 'Test Results' tab.");
+    assertThat(keyStatisticsTable).not().isEmpty();
     assertKeyStatisticsValues(keyStatisticsTable);
   }
 
@@ -147,6 +150,52 @@ class SerenityReportTest {
     assertTrue(
         failureAtTop,
         "After sorting by 'Result', the first row does not show a negative result (red X).");
+  }
+
+  @Test
+  void shouldHaveStartedColumn() {
+    openTestResultsTab();
+    setEntriesPerPageTo100InScenarioResults();
+
+    Locator startedHeader = page.locator(STARTED_HEADER_TH).first();
+    assertThat(startedHeader).not().isEmpty();
+    assertThat(startedHeader).isVisible();
+
+    Locator rows = page.locator(SCENARIO_ROWS);
+    assertTrue(rows.count() > 0, "Scenario results table has no rows to check the 'Started' column.");
+  }
+
+  @Test
+  void shouldSortByStartedColumnAndChangeRowOrder() {
+    openTestResultsTab();
+    setEntriesPerPageTo100InScenarioResults();
+
+    Locator startedHeader = page.locator(STARTED_HEADER_TH).first();
+    assertThat(startedHeader).not().isEmpty();
+
+    List<String> initialOrder = currentRowSignatures();
+    assertTrue(initialOrder.size() > 1, "Need at least two rows to verify sorting by 'Started'.");
+
+    startedHeader.click();
+    waitForTableRedraw();
+    List<String> firstClickOrder = currentRowSignatures();
+
+    startedHeader.click();
+    waitForTableRedraw();
+    List<String> secondClickOrder = currentRowSignatures();
+
+    assertNotEquals(
+        firstClickOrder,
+        secondClickOrder,
+        "Sorting by 'Started' in the opposite direction should change the row order.");
+  }
+
+  private List<String> currentRowSignatures() {
+    return page.locator(SCENARIO_ROWS).allInnerTexts();
+  }
+
+  private void waitForTableRedraw() {
+    page.waitForTimeout(300);
   }
 
   private void setEntriesPerPageTo100InScenarioResults() {

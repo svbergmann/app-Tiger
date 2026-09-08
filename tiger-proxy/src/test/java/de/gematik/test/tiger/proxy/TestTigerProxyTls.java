@@ -41,8 +41,11 @@ import de.gematik.test.tiger.config.ResetTigerConfiguration;
 import de.gematik.test.tiger.proxy.AbstractNonHttpTest.ThrowingConsumer;
 import de.gematik.test.tiger.proxy.certificate.TlsFacet;
 import io.restassured.RestAssured;
+import io.restassured.builder.RequestSpecBuilder;
+import io.restassured.config.RestAssuredConfig;
 import io.restassured.config.SSLConfig;
 import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
 import java.io.*;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -570,12 +573,19 @@ class TestTigerProxyTls extends AbstractTigerProxyTest {
   void autoconfigureSslContextRestAssured_shouldTrustTigerProxy() {
     spawnTigerProxyWithDefaultRoutesAndWith(new TigerProxyConfiguration());
 
-    RestAssured.config =
-        RestAssured.config()
-            .sslConfig(SSLConfig.sslConfig().trustStore(tigerProxy.buildTruststore()));
+    RequestSpecification requestSpec =
+        new RequestSpecBuilder()
+            .setConfig(
+                RestAssuredConfig.config()
+                    .sslConfig(SSLConfig.sslConfig().trustStore(tigerProxy.buildTruststore())))
+            .build();
 
-    RestAssured.proxy("localhost", tigerProxy.getProxyPort());
-    Response response = RestAssured.get("https://backend/foobar").andReturn();
+    Response response =
+        RestAssured.given()
+            .spec(requestSpec)
+            .proxy("localhost", tigerProxy.getProxyPort())
+            .get("https://backend/foobar")
+            .andReturn();
 
     assertThat(response.getStatusCode()).isEqualTo(666);
   }

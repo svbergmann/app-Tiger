@@ -22,6 +22,7 @@ package de.gematik.test.tiger.mockserver.httpclient;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
+import de.gematik.rbellogger.util.RbelInternetAddress;
 import de.gematik.test.tiger.mockserver.httpclient.ReusableChannelMap.ChannelId;
 import de.gematik.test.tiger.mockserver.model.HttpRequest;
 import de.gematik.test.tiger.mockserver.model.SocketAddress;
@@ -29,11 +30,16 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import lombok.val;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -43,6 +49,11 @@ import org.junit.jupiter.api.Test;
  * a new TCP connection on every request.
  */
 class ReusableChannelMapChannelReuseTest {
+
+  @AfterEach
+  void restoreRealResolver() {
+    RbelInternetAddress.resetHostnameResolver();
+  }
 
   @Test
   void channelShouldBeReusedWhenRemoteAddressIsResolvedViaOutgoingChannel() {
@@ -371,6 +382,40 @@ class ReusableChannelMapChannelReuseTest {
     assertThat(channelMap.getEntries()).hasSize(1);
   }
 
+  @Test
+  void aMovedHostShouldSettleOnItsNewAddressRatherThanEvictEveryRequest() throws Exception {
+    val client = mockChannel();
+    val channelMap = new ReusableChannelMap();
+    val oldAddress = InetAddress.getByAddress(new byte[] {10, 0, 0, 1});
+    val newAddress = InetAddress.getByAddress(new byte[] {10, 0, 0, 2});
+
+    RbelInternetAddress.setHostnameResolver(host -> oldAddress);
+    val beforeMove = channelTargeting("10.0.0.1", 443, "10.0.0.1");
+    channelMap.addChannel(
+        ChannelId.from(requestFor(client, "idp.example.com", "10.0.0.1")), beforeMove);
+    assertThat(channelMap.getChannelToReuse(requestFor(client, "idp.example.com", "10.0.0.1")))
+        .as("while the host is where it was, its channel is reused")
+        .isNotNull();
+
+    RbelInternetAddress.setHostnameResolver(host -> newAddress);
+    assertThat(channelMap.getChannelToReuse(requestFor(client, "idp.example.com", "10.0.0.1")))
+        .as("the host has moved, so the channel aimed at the old address is dropped")
+        .isNull();
+    verify(beforeMove.channel()).close();
+
+    // the replacement connection, opened to where the host now is
+    val afterMove = channelTargeting("10.0.0.2", 443, "10.0.0.2");
+    channelMap.addChannel(
+        ChannelId.from(requestFor(client, "idp.example.com", "10.0.0.2")), afterMove);
+
+    assertThat(channelMap.getChannelToReuse(requestFor(client, "idp.example.com", "10.0.0.2")))
+        .as(
+            "the replacement points where the host now is, so the next request must reuse it -"
+                + " evicting again here is the thrash, and means pooling never recovers")
+        .isNotNull();
+    verify(afterMove.channel(), never()).close();
+  }
+
   /**
    * With a forward proxy configured, netty's {@code ProxyHandler} connects the socket to the proxy
    * and tunnels onwards, so the socket's peer is the proxy and never the target. Judging staleness
@@ -391,6 +436,40 @@ class ReusableChannelMapChannelReuseTest {
         .as("The target has not moved, so the tunnel through the proxy is still good.")
         .isNotNull();
     verify(pooled.channel(), never()).close();
+  }
+
+  @Test
+  void aPooledChannelToAForwardProxyShouldNotLookReroutedJustBecauseTheTargetIsElsewhere()
+      throws Exception {
+    val client = mockChannel();
+    val channelMap = new ReusableChannelMap();
+    resolveHosts(Map.of("idp.example.com", "10.0.0.1", "proxy.example.com", "192.168.99.1"));
+
+    val pooled = channelTargeting("192.168.99.1", 3128, "192.168.99.1");
+    channelMap.addChannel(ChannelId.from(viaForwardProxy(client, "idp.example.com")), pooled);
+
+    assertThat(channelMap.getChannelToReuse(viaForwardProxy(client, "idp.example.com")))
+        .as(
+            "the channel is connected to the proxy, exactly where this request is headed, so it is"
+                + " still good - while the check asked where the target resolves it compared the"
+                + " target's IP against the proxy's socket and dropped the connection every time")
+        .isNotNull();
+    verify(pooled.channel(), never()).close();
+  }
+
+  @Test
+  void aPooledChannelShouldStillBeDroppedWhenTheForwardProxyItselfMoves() throws Exception {
+    val client = mockChannel();
+    val channelMap = new ReusableChannelMap();
+    resolveHosts(Map.of("idp.example.com", "10.0.0.1", "proxy.example.com", "192.168.99.2"));
+
+    val pooled = channelTargeting("192.168.99.1", 3128, "192.168.99.1");
+    channelMap.addChannel(ChannelId.from(viaForwardProxy(client, "idp.example.com")), pooled);
+
+    assertThat(channelMap.getChannelToReuse(viaForwardProxy(client, "idp.example.com")))
+        .as("the proxy is no longer at 192.168.99.1, so the socket pointing there is of no use")
+        .isNull();
+    verify(pooled.channel()).close();
   }
 
   /**
@@ -476,6 +555,41 @@ class ReusableChannelMapChannelReuseTest {
                     .withPort(443)
                     .withScheme(SocketAddress.Scheme.HTTPS)),
         new InetSocketAddress(resolvesTo, 443));
+  }
+
+  /**
+   * A plain-HTTP request as it looks once a forward proxy has been applied: the request still names
+   * the target it was written for, while the address to dial has been replaced by the proxy's.
+   */
+  private static HttpRequestInfo viaForwardProxy(Channel client, String target) {
+    return new HttpRequestInfo(
+        client,
+        new HttpRequest()
+            .setReceiverAddress(
+                new SocketAddress()
+                    .withHost(target)
+                    .withPort(80)
+                    .withScheme(SocketAddress.Scheme.HTTP)),
+        InetSocketAddress.createUnresolved("proxy.example.com", 3128));
+  }
+
+  /** Pins hostnames to addresses; anything not listed deliberately fails to resolve. */
+  private static void resolveHosts(Map<String, String> hostToIp) throws Exception {
+    val addresses = new HashMap<String, InetAddress>();
+    for (val entry : hostToIp.entrySet()) {
+      addresses.put(
+          entry.getKey(),
+          InetAddress.getByAddress(
+              entry.getKey(), InetAddress.getByName(entry.getValue()).getAddress()));
+    }
+    RbelInternetAddress.setHostnameResolver(
+        host -> {
+          val address = addresses.get(host);
+          if (address == null) {
+            throw new UnknownHostException(host);
+          }
+          return address;
+        });
   }
 
   /** A pooled channel opened towards {@code ip:port}, with the socket landing there as well. */

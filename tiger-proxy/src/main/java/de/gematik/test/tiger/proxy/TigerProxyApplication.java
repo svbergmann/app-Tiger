@@ -56,9 +56,9 @@ public class TigerProxyApplication implements ServletContextListener {
     System.setProperty("java.util.logging.config.file", "SKIP_MOCKSERVER_LOG_INIT!");
 
     new SpringApplicationBuilder()
+        .main(TigerProxyApplication.class)
         .bannerMode(Mode.OFF)
         .sources(TigerProxyApplication.class)
-        .initializers()
         .run(args);
   }
 

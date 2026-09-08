@@ -121,7 +121,6 @@ public abstract class AbstractTigerProxy implements ITigerProxy, AutoCloseable {
     addFixVauKey();
     initializeFileWriter();
     this.tigerProxyConfiguration = configuration;
-    addNoteCriterions();
     if (configuration.getFileSaveInfo() != null
         && StringUtils.isNotEmpty(configuration.getFileSaveInfo().getSourceFile())) {
       readTrafficFromSourceFile(configuration.getFileSaveInfo().getSourceFile());
@@ -158,19 +157,6 @@ public abstract class AbstractTigerProxy implements ITigerProxy, AutoCloseable {
 
   protected boolean isTigerProxyMatching(TigerProxyRemoteTransmissionConversionPlugin plugin) {
     return plugin.getTigerProxy() == this;
-  }
-
-  private void addNoteCriterions() {
-    if (tigerProxyConfiguration.getNotes() == null) {
-      return;
-    }
-    tigerProxyConfiguration
-        .getNotes()
-        .forEach(
-            note ->
-                rbelLogger
-                    .getValueShader()
-                    .addJexlNoteCriterion(note.getJexlCriterion(), note.getMessage()));
   }
 
   private void initializeFileWriter() {

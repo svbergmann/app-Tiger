@@ -39,6 +39,21 @@ If the file does not exist, Tiger fails immediately.
 . The upward search stops when a VCS root directory is encountered (i.e. a directory containing `.git`, `.hg`, or `.svn`).
 The VCS root itself is still checked for a tiger YAML before stopping.
 
+[#_tiger_rootfolder]
+=== tiger.rootfolder
+
+Once the main `tiger.yaml` has been located (see <<_tiger_yaml_file_resolution>>), Tiger stores the **directory containing it** as the read-only configuration key `tiger.rootfolder`.
+If no `tiger.yaml` is found at all (e.g. `tiger.testenv.cfgfile` was set but does not point to an existing file, or none is required), `tiger.rootfolder` falls back to the current working directory.
+
+`tiger.rootfolder` is used internally as the anchor for resolving **relative file paths** referenced from within the configuration, so that such paths are interpreted relative to the location of `tiger.yaml` rather than relative to whatever directory the JVM happens to be started from. Examples of settings resolved against `tiger.rootfolder`:
+
+* `tigerProxy.fileSaveInfo.sourceFile` (the `.tgr` file a Tiger Proxy replays traffic from at startup)
+* `tigerProxy.keyFolders` (folders scanned for cryptographic keys)
+* the master-secrets file used for TLS decryption
+
+NOTE: `tiger.rootfolder` is set automatically by Tiger and should not be configured manually; it is documented here only to explain how relative paths in the configuration are resolved.
+
+
 [#_additional_yaml_files]
 === Additional YAML files
 

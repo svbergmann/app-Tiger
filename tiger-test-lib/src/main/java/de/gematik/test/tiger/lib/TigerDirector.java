@@ -345,12 +345,12 @@ public class TigerDirector {
 
     envMgrApplicationContext =
         new SpringApplicationBuilder()
+            .main(TigerTestEnvMgrApplication.class)
+            .sources(TigerTestEnvMgrApplication.class)
             .bannerMode(Mode.OFF)
             .properties(properties)
-            .sources(TigerTestEnvMgrApplication.class)
             .web(webApplicationType)
             .registerShutdownHook(false)
-            .initializers()
             .run();
 
     tigerTestEnvMgr = envMgrApplicationContext.getBean(TigerTestEnvMgr.class);

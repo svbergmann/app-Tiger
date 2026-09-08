@@ -54,10 +54,7 @@ import de.gematik.test.tiger.proxy.tracing.TracingPushService;
 import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
-import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -173,6 +170,11 @@ class TigerRemoteProxyClientTest {
       tigerRemoteProxyClient.clearAllMessages();
       tigerRemoteProxyClient.clearAllRoutes();
     }
+    tigerRemoteProxyClient
+        .getMessageAssembler()
+        .setMaximumMessageAge(
+            Duration.ofSeconds(
+                new TigerProxyConfiguration().getMaximumPartialMessageAgeInSeconds()));
 
     unirestInstance =
         new UnirestInstance(new Config().proxy("localhost", tigerProxy.getProxyPort()));
@@ -700,9 +702,10 @@ class TigerRemoteProxyClientTest {
   }
 
   @Test
-  void strayMessageReception_shouldBeCleanedAtInterval() throws InterruptedException {
-    tigerRemoteProxyClient.getPartiallyReceivedMessageMap().clear();
-    tigerRemoteProxyClient.setMaximumPartialMessageAge(Duration.ofMillis(100));
+  void strayMessageReception_shouldBeCleanedWithoutFurtherTraffic() {
+    var assembler = tigerRemoteProxyClient.getMessageAssembler();
+    assembler.clear();
+    assembler.setMaximumMessageAge(Duration.ofSeconds(1));
 
     tigerRemoteProxyClient
         .getTigerStompSessionHandler()
@@ -717,34 +720,9 @@ class TigerRemoteProxyClientTest {
     addMessagePart("responseUuid", 1, 3, "blub");
     addMessagePart("responseUuid", 0, 3, "blub");
 
-    await()
-        .atMost(1, TimeUnit.SECONDS)
-        .until(tigerRemoteProxyClient.getPartiallyReceivedMessageMap()::size, size -> size == 2);
+    await().atMost(1, TimeUnit.SECONDS).until(() -> assembler.snapshot().size(), size -> size == 2);
 
-    // Calculate time to wait until last partial message is expired
-    ZonedDateTime oldestMessageTime =
-        new LinkedList<>(tigerRemoteProxyClient.getPartiallyReceivedMessageMap().values())
-            .getLast()
-            .getReceivedTime();
-    long millisToWait =
-        Math.max(
-            0,
-            ChronoUnit.MILLIS.between(
-                ZonedDateTime.now(), oldestMessageTime.plus(Duration.ofMillis(110))));
-
-    Thread.sleep(millisToWait);
-
-    tigerRemoteProxyClient
-        .getTigerStompSessionHandler()
-        .getTracingStompHandler()
-        .handleFrame(
-            null, TigerTracingDto.builder().messageUuid("requestUuid2").sequenceNumber(3L).build());
-
-    await()
-        .atMost(1, TimeUnit.SECONDS)
-        .until(
-            tigerRemoteProxyClient::getPartiallyReceivedMessageMap,
-            map -> map.size() == 1 && map.containsKey("requestUuid2"));
+    await().atMost(10, TimeUnit.SECONDS).until(() -> assembler.snapshot().isEmpty());
   }
 
   @Test
@@ -757,6 +735,31 @@ class TigerRemoteProxyClientTest {
                 .connectionTimeoutInSeconds(1)
                 .build())) {
       assertThatNoException().isThrownBy(tigerProxy::subscribeToTrafficEndpoints);
+    }
+  }
+
+  @Test
+  void overlappingConnectAttempts_areSingleFlight() throws InterruptedException {
+    try (var client =
+        new TigerRemoteProxyClient(
+            "http://localhost:1",
+            TigerProxyConfiguration.builder().connectionTimeoutInSeconds(5).build())) {
+      Thread firstAttempt = new Thread(client::connect, "first-connect-attempt");
+      firstAttempt.setUncaughtExceptionHandler((t, e) -> {});
+      firstAttempt.start();
+      Thread.sleep(200);
+
+      long start = System.nanoTime();
+      client.connectToRemoteUrl(client.getTigerStompSessionHandler(), 5, false);
+      long elapsedMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
+
+      assertThat(elapsedMs)
+          .as(
+              "an overlapping connect attempt must be rejected immediately, not queued behind the"
+                  + " one already in progress")
+          .isLessThan(100);
+
+      firstAttempt.join(TimeUnit.SECONDS.toMillis(10));
     }
   }
 
@@ -829,7 +832,7 @@ class TigerRemoteProxyClientTest {
             .receiver(RbelSocketAddress.fromString("127.0.0.1:8080").orElse(null))
             .messageFrame(new TracingMessageFrame(localClient))
             .build();
-    localClient.getPartiallyReceivedMessageMap().put(partialPrev, partialMessage);
+    localClient.getMessageAssembler().receiveMetadata(partialPrev, partialMessage);
 
     localClient.scheduleAfterMessage(partialPrev, parseTask, msgBehindPartial);
 
@@ -843,6 +846,65 @@ class TigerRemoteProxyClientTest {
     assertThat(waitingTasks).isNotNull();
     assertThat(waitingTasks.get(missingPrev)).isEmpty();
     assertThat(waitingTasks.get(partialPrev)).isNotEmpty();
+  }
+
+  @Test
+  void scheduleAfterMessage_shouldNotTimeOutWhileThePreviousMessageIsBeingRedownloaded() {
+    TigerRemoteProxyClient localClient =
+        new TigerRemoteProxyClient(
+            "http://localhost:0",
+            TigerProxyConfiguration.builder()
+                .waitForPreviousMessageBeforeParsingInSeconds(0.05F)
+                .proxyLogLevel("WARN")
+                .build());
+
+    AtomicInteger parseTaskExecutions = new AtomicInteger(0);
+    Runnable parseTask = parseTaskExecutions::incrementAndGet;
+    String beingRedownloaded = "previous-message-being-redownloaded";
+
+    localClient
+        .getMessageAssembler()
+        .receiveMetadata(beingRedownloaded, partialMessageFor(beingRedownloaded, localClient));
+    var discardedUuids = localClient.getMessageAssembler().discardIncompleteMessagesForRedownload();
+    assertThat(discardedUuids).contains(beingRedownloaded);
+
+    localClient.scheduleAfterMessage(beingRedownloaded, parseTask, "waiting-on-the-redownload");
+
+    await()
+        .during(Duration.ofMillis(600))
+        .atMost(Duration.ofSeconds(2))
+        .untilAsserted(
+            () ->
+                assertThat(parseTaskExecutions.get())
+                    .as(
+                        "the replacement is still being downloaded, so releasing here would parse"
+                            + " this message ahead of its own predecessor")
+                    .isZero());
+
+    localClient.getMessageAssembler().finishRedownload(discardedUuids);
+
+    await()
+        .atMost(Duration.ofSeconds(5))
+        .untilAsserted(
+            () ->
+                assertThat(parseTaskExecutions.get())
+                    .as("once the download is over the task must not stay queued forever")
+                    .isOne());
+  }
+
+  private PartialTracingMessage partialMessageFor(String uuid, TigerRemoteProxyClient client) {
+    return PartialTracingMessage.builder()
+        .tracingDto(
+            TigerTracingDto.builder()
+                .messageUuid(uuid)
+                .sender(RbelSocketAddress.fromString("127.0.0.1:80").orElse(null))
+                .receiver(RbelSocketAddress.fromString("127.0.0.1:8080").orElse(null))
+                .request(true)
+                .build())
+        .sender(RbelSocketAddress.fromString("127.0.0.1:80").orElse(null))
+        .receiver(RbelSocketAddress.fromString("127.0.0.1:8080").orElse(null))
+        .messageFrame(new TracingMessageFrame(client))
+        .build();
   }
 
   @Test

@@ -23,6 +23,7 @@ package de.gematik.test.tiger.proxy;
 import static de.gematik.rbellogger.data.RbelElementAssertion.assertThat;
 import static de.gematik.test.tiger.proxy.AbstractTigerProxyTest.awaitMessagesInTigerProxy;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import com.sun.net.httpserver.HttpServer;
 import de.gematik.rbellogger.RbelConverter;
@@ -209,7 +210,7 @@ class TestWebsocket {
 
     client.connectBlocking(10, TimeUnit.SECONDS); // wait for handshake
 
-    assertThat(latch.await(10, TimeUnit.SECONDS)).isTrue();
+    await().atMost(30, TimeUnit.SECONDS).untilAsserted(() -> assertThat(latch.getCount()).isZero());
     tigerProxy.waitForAllCurrentMessagesToBeParsed();
 
     client.close();

@@ -25,7 +25,7 @@
   <parent>
     <groupId>de.gematik.test</groupId>
     <artifactId>tiger</artifactId>
-    <version>4.4.2</version>
+    <version>4.4.3</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -107,7 +107,7 @@
             </goals>
             <phase>generate-resources</phase>
             <configuration>
-              <arguments>ci</arguments>
+              <arguments>${frontend.npm.install.command}</arguments>
             </configuration>
           </execution>
 
@@ -197,4 +197,28 @@
     <sourceDirectory>${project.basedir}/src/main/kotlin</sourceDirectory>
     <testSourceDirectory>${project.basedir}/src/test/kotlin</testSourceDirectory>
   </build>
+  <profiles>
+    <profile>
+      <id>npm-install-with-lockfile</id>
+      <activation>
+        <file>
+          <exists>src/frontend/tiger-topology-visualizer/package-lock.json</exists>
+        </file>
+      </activation>
+      <properties>
+        <frontend.npm.install.command>ci</frontend.npm.install.command>
+      </properties>
+    </profile>
+    <profile>
+      <id>npm-install-without-lockfile</id>
+      <activation>
+        <file>
+          <missing>src/frontend/tiger-topology-visualizer/package-lock.json</missing>
+        </file>
+      </activation>
+      <properties>
+        <frontend.npm.install.command>install</frontend.npm.install.command>
+      </properties>
+    </profile>
+  </profiles>
 </project>

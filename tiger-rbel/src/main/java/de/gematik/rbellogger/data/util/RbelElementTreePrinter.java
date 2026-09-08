@@ -172,7 +172,7 @@ public class RbelElementTreePrinter {
     }
     String content;
     if (printParsingTimes) {
-      content = (value.getConversionTimeInNanos() / 1000) / 1000. + "ms ";
+      content = value.getConversionTimeInNanos() / 1_000_000. + "ms ";
     } else {
       content = "";
     }

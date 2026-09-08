@@ -88,10 +88,7 @@ class TigerStompSessionHandler extends StompSessionHandlerAdapter {
           remoteProxyClient.getRemoteProxyUrl(),
           session.getSessionId(),
           session.isConnected());
-      remoteProxyClient.connectToRemoteUrl(
-          this,
-          remoteProxyClient.getTigerProxyConfiguration().getConnectionTimeoutInSeconds(),
-          true);
+      remoteProxyClient.scheduleReconnect(this);
     } else if (TigerExceptionUtils.getCauseWithType(exception, ConnectException.class)
         .filter(e -> "Connection refused".equals(e.getMessage()))
         .isPresent()) {

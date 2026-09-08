@@ -23,6 +23,7 @@ package de.gematik.rbellogger.util;
 import static org.assertj.core.api.Assertions.*;
 
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import lombok.SneakyThrows;
 import lombok.val;
 import org.junit.jupiter.api.DisplayName;
@@ -47,7 +48,9 @@ class InetAddressParserTest {
     "2001::7334,                        null,                          2001:0:0:0:0:0:0:7334",
     "2001:db8::1,                       null,                          2001:db8:0:0:0:0:0:1",
     "/192.168.1.1,                      192.168.1.1,                   192.168.1.1",
-    "nonexistent-host.fdsafew,          nonexistent-host.fdsafew,      null", // Unresolvable
+    // syntactically invalid, so no resolver can ever answer it: deterministic, and it costs no
+    // DNS round trip (a plausible-looking name would, and a wildcard resolver could resolve it)
+    "nonexistent..host,                 nonexistent..host,             null",
     "blubsblabs/<unresolved>:57513,     blubsblabs,                    null" // Unresolvable
     // hostname
   })
@@ -85,9 +88,12 @@ class InetAddressParserTest {
     String input = "localhost";
     val parsedAddress = RbelInternetAddressParser.parseInetAddress(input);
 
-    // For "localhost", getHostName() should return "localhost" and getHostAddress() the loopback IP
     assertThat(parsedAddress.getHostname()).isEqualTo("localhost");
-    assertThat(parsedAddress.getIpAddress()).isEqualTo(new byte[] {127, 0, 0, 1});
+    assertThat(parsedAddress.getIpAddress()).isNull();
+    assertThat(parsedAddress.toInetAddress())
+        .get()
+        .extracting(InetAddress::getAddress)
+        .isEqualTo(new byte[] {127, 0, 0, 1});
   }
 
   @Test
@@ -104,6 +110,59 @@ class InetAddressParserTest {
     assertThat(parsedAddress.getIpAddress()).isEqualTo(new byte[] {192 - 256, 168 - 256, 1, 1});
     // The hostname might be the IP itself or a resolved name if it somehow worked.
     assertThat(parsedAddress.getHostname()).matches("192\\.168\\.1\\.1|\\S+");
+  }
+
+  /**
+   * Mimics an accepted connection: the peer address arrives as raw bytes with no hostname attached,
+   * so anything the old code printed came out of a reverse lookup.
+   */
+  @SneakyThrows
+  private static InetAddress peerAddressWithoutHostname(String ip) {
+    return InetAddress.getByAddress(InetAddress.getByName(ip).getAddress());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"127.0.0.1", "127.0.0.2", "::1"})
+  @DisplayName("Every loopback peer is named 'localhost', whatever the local hosts file says")
+  void loopbackPeerWithoutHostname_isNamedLocalhost(String loopbackIp) {
+    val peer = RbelInternetAddress.fromInetAddress(peerAddressWithoutHostname(loopbackIp));
+
+    assertThat(peer.getHostname()).isEqualTo("localhost");
+  }
+
+  @Test
+  @DisplayName("A peer with no hostname and no PTR record is described by its IP")
+  void unnamedNonLoopbackPeer_isDescribedByItsIp() {
+    // 203.0.113.7 is TEST-NET-3 and never has a PTR record, which makes this the one case that
+    // fails on any machine if the reverse lookup comes back: getHostName() would hand back the IP
+    // as a hostname, and only after blocking for the resolver timeout
+    val peer = RbelInternetAddress.fromInetAddress(peerAddressWithoutHostname("203.0.113.7"));
+
+    assertThat(peer.getHostname()).isNull();
+    assertThat(peer.printValidHostname()).isEqualTo("203.0.113.7");
+  }
+
+  @SneakyThrows
+  @Test
+  @DisplayName("A hostname the connection already carries is kept, even if it means loopback")
+  void explicitHostname_isKept() {
+    val namedAddress =
+        InetAddress.getByAddress("kubernetes.docker.internal", new byte[] {127, 0, 0, 1});
+
+    val peer = RbelInternetAddress.fromInetAddress(namedAddress);
+
+    assertThat(peer.getHostname()).isEqualTo("kubernetes.docker.internal");
+  }
+
+  @Test
+  @DisplayName("A loopback socket address prints as 'localhost' but records as its IP")
+  void loopbackSocketAddress_printsHostnameButRecordsIp() {
+    val acceptedConnection = new InetSocketAddress(peerAddressWithoutHostname("127.0.0.1"), 4711);
+
+    val socketAddress = RbelSocketAddress.create(acceptedConnection);
+
+    assertThat(socketAddress.printHostname()).isEqualTo("localhost");
+    assertThat(socketAddress).hasToString("127.0.0.1:4711");
   }
 
   @ParameterizedTest

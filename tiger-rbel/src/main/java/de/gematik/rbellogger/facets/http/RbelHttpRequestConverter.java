@@ -168,7 +168,7 @@ public class RbelHttpRequestConverter extends RbelHttpResponseConverter {
     }
     String firstLine =
         new String(data.toByteArray(0, Math.min(8, data.size())), StandardCharsets.US_ASCII);
-    String method = firstLine.split(" ", 2)[0];
+    String method = StringUtils.substringBefore(firstLine, " ");
     return HTTP_METHODS.contains(method)
         && data.size() > method.length()
         && data.get(method.length()) == ' ';

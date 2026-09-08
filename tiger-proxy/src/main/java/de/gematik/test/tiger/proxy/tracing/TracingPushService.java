@@ -47,7 +47,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 @RequiredArgsConstructor
 public class TracingPushService {
 
-  public static final int MAX_MESSAGE_SIZE = 512 * KB;
+  public static final int MAX_MESSAGE_SIZE = 64 * KB;
   private final SimpMessagingTemplate template;
   private final TigerBuildPropertiesService buildPropertiesService;
   private final TigerProxy tigerProxy;
@@ -185,7 +185,7 @@ public class TracingPushService {
     }
 
     final int size = content.size();
-    final int chunkSize = content.getChunkSize();
+    final int chunkSize = MAX_MESSAGE_SIZE;
     final int numberOfParts = (size + chunkSize - 1) / chunkSize;
     for (int i = 0, nextPartIndex = 0; nextPartIndex < size; i++) {
       byte[] partContent =

@@ -25,12 +25,13 @@ import de.gematik.rbellogger.data.RbelMultiMap;
 import de.gematik.rbellogger.util.RbelInternetAddressParser;
 import de.gematik.rbellogger.util.RbelSocketAddress;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 
 @Data
@@ -129,12 +130,13 @@ public class RbelSocketAddressFacet implements RbelFacet {
         .orElse(false);
   }
 
-  @SneakyThrows
   private static String canonicalize(String hostname) {
-    try {
-      return InetAddress.getByName(hostname).getCanonicalHostName();
-    } catch (UnknownHostException e) {
+    if (StringUtils.isBlank(hostname)) {
       return hostname;
     }
+    return RbelInternetAddressParser.parseInetAddress(hostname)
+        .toInetAddress()
+        .map(InetAddress::getHostAddress)
+        .orElse(hostname.toLowerCase(Locale.ROOT));
   }
 }

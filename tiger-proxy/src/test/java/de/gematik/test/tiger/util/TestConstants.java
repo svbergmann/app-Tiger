@@ -22,5 +22,10 @@ package de.gematik.test.tiger.util;
 
 public class TestConstants {
 
-  public static final String LOCALHOST_REGEXP = "((view-|)localhost|127.0.0.\\d+):";
+  /**
+   * Loopback socket addresses are rendered from their IP, never from a reverse lookup, so this is
+   * exact on purpose - widening it again to accept hosts-file aliases would hide the very
+   * regression it guards against.
+   */
+  public static final String LOCALHOST_REGEXP = "127\\.0\\.0\\.1:";
 }

@@ -477,7 +477,7 @@ public class TigerProxy extends AbstractTigerProxy implements AutoCloseable, Rbe
     log.info(
         "Deleted route {} (id {}). Current # expectations {}",
         route,
-        routeId,
+        StringUtils.replaceEach(routeId, new String[] {"\r", "\n"}, new String[] {"_", "_"}),
         mockServer.retrieveActiveExpectations().size());
   }
 

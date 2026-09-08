@@ -59,7 +59,7 @@ public class TigerProxyConfiguration {
   @Builder.Default private boolean enableLegacyTraffic = false;
   @Builder.Default private boolean downloadInitialTrafficFromEndpoints = false;
   @Builder.Default private String trafficEndpointFilterString = "";
-  @Builder.Default private int maximumPartialMessageAgeInSeconds = 300;
+  @Builder.Default private int maximumPartialMessageAgeInSeconds = 30;
   @Builder.Default private int connectionTimeoutInSeconds = 10;
   @Builder.Default private float waitForPreviousMessageBeforeParsingInSeconds = 5;
   @Builder.Default private float previousMessageTimeoutDetectionGracePeriodInSeconds = 10;
@@ -77,7 +77,18 @@ public class TigerProxyConfiguration {
    */
   @Builder.Default private int clockSyncSamples = 3;
 
+  /** Buffer size for reassembling an inbound STOMP message on the remote-proxy client. */
   @Builder.Default private int stompClientBufferSizeInMb = 1;
+
+  /** Pending-send buffer the tracing broker keeps per WebSocket session. */
+  @Builder.Default private int stompServerSendBufferSizeInMb = 16;
+
+  /** How long the tracing broker may take to flush a message to a WebSocket session. */
+  @Builder.Default private int stompServerSendTimeLimitInSeconds = 20;
+
+  /** Interval at which both ends of a tracing connection exchange STOMP heartbeats. */
+  @Builder.Default private int stompHeartbeatInSeconds = 10;
+
   @Builder.Default private int perMessageBufferSizeInMb = 100;
   @Builder.Default private int rbelBufferSizeInMb = 1024;
   @Builder.Default private int skipParsingWhenMessageLargerThanKb = 8_000;
@@ -91,7 +102,6 @@ public class TigerProxyConfiguration {
   @Builder.Default private boolean honorHostHeaderRouting = false;
   @Builder.Default private boolean activateTrafficLogging = true;
   @Builder.Default private boolean logConnectMessages = false;
-  @Builder.Default private List<TigerProxyNoteCommand> notes = new ArrayList<>();
 
   @Builder.Default
   private TrafficEndpointConfiguration trafficEndpointConfiguration =

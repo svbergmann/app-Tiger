@@ -50,7 +50,7 @@ public class RbelHtmlRenderer {
   public static final String MODAL = "modal";
   private final RbelValueShader rbelValueShader;
   @Setter private boolean renderNestedObjectsWithoutFacetRenderer = false;
-  @Setter private long maximumEntitySizeInBytes = 4 * MB;
+  @Setter private long maximumEntitySizeInBytes = 4L * MB;
   @Setter private long maximumDefaultExpandedMessageDepth = 2;
   @Setter private String title = "Tiger Proxy Log";
   @Setter private String subTitle = "";

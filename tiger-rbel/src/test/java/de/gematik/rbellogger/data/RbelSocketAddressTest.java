@@ -59,8 +59,8 @@ class RbelSocketAddressTest {
       value = {
         "'lufxrqwe:80',        'lufxrqwe',              80",
         "'lufxrqwe',           'lufxrqwe',              0",
-        "'127.0.0.1:543',      '(view-|)localhost|127\\.0\\.0\\.\\d+',     543",
-        "'127.0.0.1',          '(view-|)localhost|127\\.0\\.0\\.\\d+',     0",
+        "'127.0.0.1:543',      'localhost',             543",
+        "'127.0.0.1',          'localhost',             0",
         "'1.2.3.4',            '1.2.3.4',               0",
         "'lufxrqwe:-1',        'lufxrqwe',              -1",
         "'lufxrqwe__',         'lufxrqwe__',            0",

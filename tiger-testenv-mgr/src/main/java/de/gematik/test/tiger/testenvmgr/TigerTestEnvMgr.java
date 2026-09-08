@@ -382,11 +382,11 @@ public class TigerTestEnvMgr
     properties.put("spring.mustache.enabled", false); // TGR-875 avoid warning in console
     properties.put("spring.mustache.check-template-location", false);
     log.info("Starting with port {}", properties.get(SERVER_PORT));
-
     localTigerProxyApplicationContext =
         (ServletWebServerApplicationContext)
             new SpringApplicationBuilder()
                 .bannerMode(Mode.OFF)
+                .main(TigerProxyApplication.class)
                 .sources(TigerProxyApplication.class)
                 .web(WebApplicationType.SERVLET)
                 .registerShutdownHook(false)

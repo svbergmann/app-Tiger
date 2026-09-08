@@ -1,43 +1,43 @@
-For Ui tests you can set the system property tiger.test.headless to false to see the browser in your
-local test
-environment
+Run local Playwright UI tests with `runUiTestsLocally.sh`. It compiles the test code, starts the
+corresponding Tiger dummy environment, and runs the Playwright tests.
 
-mvn call first to compile test code
-
-```
-mvn test-compile -P start-tiger-dummy
+```bash
+./runUiTestsLocally.sh
 ```
 
-Wait and in a second git bash window do
+Run an individual suite by passing one of these stages:
 
-```
-mvn -P run-playwright-test failsafe:integration-test failsafe:verify
-```
-
-then with no delay do in the first window to run the dummy test
-
-```
-./startWorkflowUi.sh
+```bash
+./runUiTestsLocally.sh base
+./runUiTestsLocally.sh report
+./runUiTestsLocally.sh replay
+./runUiTestsLocally.sh sequencediagram
+./runUiTestsLocally.sh testselector
 ```
 
-This is needed as the shell script will NOT compile the test code so whenever you change something
-on
-the test code do the verify call before hand and abort before execution
+To run a suite with a visible browser, start the dummy environment in one Git Bash window:
 
-Add DEBUG=pw:api before the second mvn call for more details on the playwright execution
+```bash
+mvn -ntp test-compile -P start-tiger-dummy
+export TGR_TESTENV_CFG_CHECK_MODE="myEnv"
+export TGR_TESTENV_CFG_DELETE_MODE="deleteEnv"
+export TGR_TESTENV_CFG_EDIT_MODE="editEnv"
+mvn --no-transfer-progress \
+  -DtgrTestPropCfgCheckMode=myProp \
+  -DtgrTestPropCfgEditMode=editProp \
+  -DtgrTestPropCfgDeleteMode=deleteProp \
+  -P start-tiger-dummy failsafe:integration-test
+```
 
-To run the tests in head mode, just run the mvn command with the -Dtiger.test.headless=false flag (
-true is the
-default)
-To enable tracing of the playwright execution, run the mvn command with -Dtiger.test.trace=true,
-which is the default
+Wait until the dummy environment logs the Workflow UI URL, then run the Playwright tests in a
+second window:
 
-To debug locally
+```bash
+DEBUG=pw:api mvn -P run-playwright-test -Dtiger.test.headless=false \
+  failsafe:integration-test failsafe:verify
+```
 
-Start the test run by ```./startWorkflowUi.sh```
-Wait for the console to show the workflow UI link and open it in browser
-Wait a bit more for the test environment to come up and the first tests to be started.
-Running your tests in Intellij
+Omit `DEBUG=pw:api` when verbose Playwright API logging is not needed.
 
 To rerun trace archives
 

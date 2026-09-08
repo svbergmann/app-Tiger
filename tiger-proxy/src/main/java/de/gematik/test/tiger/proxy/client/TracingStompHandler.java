@@ -105,8 +105,8 @@ class TracingStompHandler implements StompFrameHandler {
             .messageFrame(messageFrame)
             .additionalInformation(tigerTracingDto.getAdditionalInformation())
             .build());
-    remoteProxyClient.initOrUpdateMessagePart(
-        tigerTracingDto.getMessageUuid(), messageFrame.getMessage());
-    remoteProxyClient.triggerPartialMessageCleanup();
+    remoteProxyClient
+        .getMessageAssembler()
+        .receiveMetadata(tigerTracingDto.getMessageUuid(), messageFrame.getMessage());
   }
 }

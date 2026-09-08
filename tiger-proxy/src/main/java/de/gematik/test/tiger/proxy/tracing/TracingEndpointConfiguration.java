@@ -23,13 +23,13 @@ package de.gematik.test.tiger.proxy.tracing;
 import static de.gematik.rbellogger.util.MemoryConstants.MB;
 
 import de.gematik.test.tiger.common.data.config.tigerproxy.TigerProxyConfiguration;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationListener;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.event.ContextStoppedEvent;
 import org.springframework.messaging.simp.config.ChannelRegistration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -44,38 +44,50 @@ import org.springframework.web.socket.config.annotation.WebSocketTransportRegist
 @RequiredArgsConstructor
 @Slf4j
 public class TracingEndpointConfiguration
-    implements WebSocketMessageBrokerConfigurer, ApplicationListener<ContextStoppedEvent> {
+    implements WebSocketMessageBrokerConfigurer, DisposableBean {
 
   private final TigerProxyConfiguration tigerProxyConfiguration;
   private final List<ThreadPoolTaskExecutor> taskExecutors = new ArrayList<>();
   private final List<ThreadPoolTaskScheduler> schedulers = new ArrayList<>();
 
-  private static ThreadPoolTaskExecutor getThreadPoolTaskExecutor() {
+  // Only a core pool size, no maximum: the default queue capacity is unbounded, so the pool never
+  // grows beyond its core size and a maximum would just read as if it meant something.
+  private ThreadPoolTaskExecutor createAndRegisterTaskExecutor(int poolSize) {
     final ThreadPoolTaskExecutor threadPoolTaskExecutor = new ThreadPoolTaskExecutor();
     threadPoolTaskExecutor.setWaitForTasksToCompleteOnShutdown(true);
     threadPoolTaskExecutor.setAwaitTerminationSeconds(2);
-    threadPoolTaskExecutor.setCorePoolSize(4);
-    threadPoolTaskExecutor.setMaxPoolSize(10);
+    threadPoolTaskExecutor.setCorePoolSize(poolSize);
     threadPoolTaskExecutor.initialize();
+    taskExecutors.add(threadPoolTaskExecutor);
     return threadPoolTaskExecutor;
   }
 
-  private static ThreadPoolTaskScheduler getThreadPoolTaskScheduler() {
+  private ThreadPoolTaskScheduler createAndRegisterTaskScheduler() {
     var scheduler = new ThreadPoolTaskScheduler();
     scheduler.setThreadNamePrefix("TGR_scheduler-");
     scheduler.setWaitForTasksToCompleteOnShutdown(true);
     scheduler.setAwaitTerminationSeconds(2);
     scheduler.setPoolSize(4);
     scheduler.initialize();
+    schedulers.add(scheduler);
     return scheduler;
   }
 
   @Override
   public void configureMessageBroker(MessageBrokerRegistry config) {
-    config.enableSimpleBroker("/topic");
+    config
+        .enableSimpleBroker("/topic")
+        .setHeartbeatValue(heartbeatIntervalsInMillis())
+        .setTaskScheduler(createAndRegisterTaskScheduler());
     config.setApplicationDestinationPrefixes(
         tigerProxyConfiguration.getTrafficEndpointConfiguration().getStompTopic());
-    config.configureBrokerChannel().taskExecutor(getThreadPoolTaskExecutor());
+    config.setPreservePublishOrder(true);
+  }
+
+  private long[] heartbeatIntervalsInMillis() {
+    final long interval =
+        Duration.ofSeconds(tigerProxyConfiguration.getStompHeartbeatInSeconds()).toMillis();
+    return new long[] {interval, interval};
   }
 
   @Override
@@ -86,7 +98,7 @@ public class TracingEndpointConfiguration
         .addEndpoint(tigerProxyConfiguration.getTrafficEndpointConfiguration().getWsEndpoint())
         .setAllowedOriginPatterns("*")
         .withSockJS()
-        .setTaskScheduler(getThreadPoolTaskScheduler());
+        .setTaskScheduler(createAndRegisterTaskScheduler());
 
     registry
         .addEndpoint(tigerProxyConfiguration.getTrafficEndpointConfiguration().getWsEndpoint())
@@ -95,21 +107,21 @@ public class TracingEndpointConfiguration
     registry
         .addEndpoint("/newMessages")
         .withSockJS()
-        .setTaskScheduler(getThreadPoolTaskScheduler());
+        .setTaskScheduler(createAndRegisterTaskScheduler());
   }
 
   @Override
   public void configureClientOutboundChannel(ChannelRegistration registration) {
-    registration.taskExecutor(getThreadPoolTaskExecutor());
+    registration.taskExecutor(createAndRegisterTaskExecutor(4));
   }
 
   @Override
   public void configureClientInboundChannel(ChannelRegistration registration) {
-    registration.taskExecutor(getThreadPoolTaskExecutor());
+    registration.taskExecutor(createAndRegisterTaskExecutor(4));
   }
 
   @Override
-  public void onApplicationEvent(ContextStoppedEvent event) {
+  public void destroy() {
     taskExecutors.forEach(ThreadPoolTaskExecutor::shutdown);
     schedulers.forEach(ThreadPoolTaskScheduler::shutdown);
   }
@@ -117,9 +129,12 @@ public class TracingEndpointConfiguration
   @Override
   public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
     log.info(
-        "Configuring WebSocket transport with buffer size limit: {} MB",
-        tigerProxyConfiguration.getStompClientBufferSizeInMb());
+        "Configuring WebSocket transport with send buffer size limit: {} MB, send time limit: {}s",
+        tigerProxyConfiguration.getStompServerSendBufferSizeInMb(),
+        tigerProxyConfiguration.getStompServerSendTimeLimitInSeconds());
     registration.setSendBufferSizeLimit(
-        tigerProxyConfiguration.getStompClientBufferSizeInMb() * MB);
+        tigerProxyConfiguration.getStompServerSendBufferSizeInMb() * MB);
+    registration.setSendTimeLimit(
+        tigerProxyConfiguration.getStompServerSendTimeLimitInSeconds() * 1000);
   }
 }

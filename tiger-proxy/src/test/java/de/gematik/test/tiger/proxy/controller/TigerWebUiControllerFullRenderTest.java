@@ -21,7 +21,6 @@
 package de.gematik.test.tiger.proxy.controller;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.*;
-import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.containsString;
 
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
@@ -30,6 +29,8 @@ import de.gematik.test.tiger.config.ResetTigerConfiguration;
 import de.gematik.test.tiger.proxy.TigerProxy;
 import de.gematik.test.tiger.proxy.TigerProxyTestHelper;
 import io.restassured.RestAssured;
+import io.restassured.builder.RequestSpecBuilder;
+import io.restassured.specification.RequestSpecification;
 import java.util.UUID;
 import kong.unirest.core.Unirest;
 import lombok.extern.slf4j.Slf4j;
@@ -99,17 +100,18 @@ class TigerWebUiControllerFullRenderTest {
     runtimeInfo
         .getWireMock()
         .register(post("/foobar").willReturn(ok().withBody(LARGE_TEXT_RESPONSE)));
+  }
 
-    RestAssured.port = adminPort;
-    RestAssured.baseURI = "http://localhost";
-    RestAssured.proxy = null; // Clear any existing proxy settings for RestAssured
+  private RequestSpecification webUiRequestSpec() {
+    return new RequestSpecBuilder().setBaseUri("http://localhost").setPort(adminPort).build();
   }
 
   @Test
   void testSingleMessageRouteServesIndexHtml() {
     String testUuid = UUID.randomUUID().toString();
 
-    given()
+    RestAssured.given()
+        .spec(webUiRequestSpec())
         .when()
         .get("/webui/message/" + testUuid)
         .then()
@@ -121,7 +123,8 @@ class TigerWebUiControllerFullRenderTest {
 
   @Test
   void testRootRouteServesIndexHtml() {
-    given()
+    RestAssured.given()
+        .spec(webUiRequestSpec())
         .when()
         .get("/webui/")
         .then()
@@ -144,7 +147,8 @@ class TigerWebUiControllerFullRenderTest {
     TigerProxyTestHelper.waitUntilMessageListInProxyContainsCountMessagesWithTimeout(
         tigerProxy, 4, 10);
 
-    given()
+    RestAssured.given()
+        .spec(webUiRequestSpec())
         .param("fromOffset", "0")
         .param("toOffsetExcluding", "10")
         .when()
@@ -159,19 +163,30 @@ class TigerWebUiControllerFullRenderTest {
   void testSingleMessageApiEndpoint() {
     String testUuid = UUID.randomUUID().toString();
 
-    given().when().get("/webui/fullyRenderedMessage/" + testUuid).then().statusCode(404);
+    RestAssured.given()
+        .spec(webUiRequestSpec())
+        .when()
+        .get("/webui/fullyRenderedMessage/" + testUuid)
+        .then()
+        .statusCode(404);
   }
 
   @Test
   void testAssetRoutesStillWork() {
-    given().when().get("/webui/assets/nonexistent.js").then().statusCode(404);
+    RestAssured.given()
+        .spec(webUiRequestSpec())
+        .when()
+        .get("/webui/assets/nonexistent.js")
+        .then()
+        .statusCode(404);
   }
 
   @Test
   void testInvalidMessageUuidHandling() {
     String invalidUuid = "invalid-uuid-format";
 
-    given()
+    RestAssured.given()
+        .spec(webUiRequestSpec())
         .when()
         .get("/webui/message/" + invalidUuid)
         .then()
