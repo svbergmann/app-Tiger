@@ -20,10 +20,14 @@
  */
 package de.gematik.test.tiger.testenvmgr.servers;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import de.gematik.test.tiger.common.config.TigerGlobalConfiguration;
 import de.gematik.test.tiger.testenvmgr.AbstractTestTigerTestEnvMgr;
 import de.gematik.test.tiger.testenvmgr.TigerTestEnvMgr;
 import de.gematik.test.tiger.testenvmgr.junit.TigerTest;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import kong.unirest.core.Unirest;
 import kong.unirest.core.UnirestInstance;
 import lombok.SneakyThrows;
@@ -63,5 +67,30 @@ class TigerProxyServerTest extends AbstractTestTigerTestEnvMgr {
             "localhost", TigerGlobalConfiguration.readIntegerOptional("free.port.0").orElseThrow());
     unirestInstance.get("https://someTigerProxy/status/200").asString();
     unirestInstance.get("https://someOtherProxy/status/200").asString();
+  }
+
+  /**
+   * A test run only ends when the JVM has no non-daemon threads left, and the embedded tomcat of a
+   * tigerProxy server keeps a non-daemon thread alive for as long as its spring context is not
+   * closed. That the tracing endpoint's thread pools are terminated along with the context is
+   * covered by TracingEndpointShutdownTest in tiger-proxy, where a SockJS session can be opened to
+   * actually start them.
+   */
+  @Test
+  void shutdown_shouldCloseSpringContext() {
+    TigerGlobalConfiguration.reset();
+    TigerGlobalConfiguration.initializeWithCliProperties(
+        Map.of(
+            "TIGER_TESTENV_CFGFILE",
+            "src/test/resources/de/gematik/test/tiger/testenvmgr/testTigerProxy.yaml"));
+    final AtomicReference<TigerProxyServer> proxyServer = new AtomicReference<>();
+
+    createTestEnvMgrSafelyAndExecute(
+        envMgr -> {
+          envMgr.setUpEnvironment();
+          proxyServer.set((TigerProxyServer) envMgr.getServers().get("testTigerProxy"));
+        });
+
+    assertThat(proxyServer.get().getApplicationContext().isActive()).isFalse();
   }
 }

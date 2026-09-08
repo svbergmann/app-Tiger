@@ -79,10 +79,6 @@ import org.springframework.http.MediaType;
 @ResetTigerConfiguration
 class TestTigerProxy extends AbstractTigerProxyTest {
 
-  // AKR: we need the 'localhost|view-localhost' because of mockserver for all
-  // checkClientAddresses-tests.
-  private static final String LOCALHOST_REGEX = "localhost|view-localhost|127\\.0\\.0\\.1";
-
   @RegisterExtension
   static WireMockExtension forwardProxy =
       WireMockExtension.newInstance()

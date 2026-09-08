@@ -30,22 +30,31 @@ import java.util.List;
 import java.util.Optional;
 
 public class NoProxyUtils {
-  private static final Cache<String, Optional<String>> RESOLVED_NO_PROXY_HOST_CACHE =
+  private static final Cache<String, String> RESOLVED_NO_PROXY_HOST_CACHE =
       CacheBuilder.newBuilder()
           .expireAfterWrite(Duration.ofMinutes(10))
           .maximumSize(10_000)
           .build();
 
+  /**
+   * Whether traffic to this host has to go through the configured forward proxy, or is listed as
+   * bypassing it. {@code remoteAddress.getHostName()} is asked last, and only once there is a name
+   * to compare against: it blocks on a reverse lookup, on the netty event loop.
+   */
   public static boolean shouldUseProxyForHost(
       InetAddress remoteAddress, List<String> noProxyHosts) {
-    if (noProxyHosts == null) {
+    if (noProxyHosts == null || noProxyHosts.isEmpty()) {
       return true;
     }
-    final String remoteHostName = remoteAddress.getHostName();
-    return noProxyHosts.stream()
-        .map(NoProxyUtils::resolveNoProxyHostName)
-        .flatMap(Optional::stream)
-        .noneMatch(remoteHostName::equals);
+    final List<String> resolvedNoProxyHosts =
+        noProxyHosts.stream()
+            .map(NoProxyUtils::resolveNoProxyHostName)
+            .flatMap(Optional::stream)
+            .toList();
+    if (resolvedNoProxyHosts.isEmpty()) {
+      return true;
+    }
+    return !resolvedNoProxyHosts.contains(remoteAddress.getHostName());
   }
 
   static void clearResolvedNoProxyHostCache() {
@@ -56,6 +65,10 @@ public class NoProxyUtils {
     return RESOLVED_NO_PROXY_HOST_CACHE.size();
   }
 
+  /**
+   * The name a {@code noProxyHosts} entry resolves to, remembered for the TTL. Only successes are
+   * cached; a failed lookup is retried on the next request.
+   */
   private static Optional<String> resolveNoProxyHostName(String noProxyHost) {
     if (noProxyHost == null) {
       return Optional.empty();
@@ -65,15 +78,15 @@ public class NoProxyUtils {
       return Optional.empty();
     }
 
-    final Optional<String> cachedResult = RESOLVED_NO_PROXY_HOST_CACHE.getIfPresent(trimmedHost);
+    final String cachedResult = RESOLVED_NO_PROXY_HOST_CACHE.getIfPresent(trimmedHost);
     if (cachedResult != null) {
-      return cachedResult;
+      return Optional.of(cachedResult);
     }
 
     final Optional<String> resolvedHostName =
         Optional.ofNullable(nullOnException(InetAddress::getByName).apply(trimmedHost))
             .map(InetAddress::getHostName);
-    RESOLVED_NO_PROXY_HOST_CACHE.put(trimmedHost, resolvedHostName);
+    resolvedHostName.ifPresent(name -> RESOLVED_NO_PROXY_HOST_CACHE.put(trimmedHost, name));
     return resolvedHostName;
   }
 }

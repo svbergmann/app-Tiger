@@ -138,10 +138,10 @@ public class TigerProxyServer extends AbstractExternalTigerServer {
         new SpringApplicationBuilder()
             .bannerMode(Mode.OFF)
             .properties(properties)
+            .main(TigerProxyApplication.class)
             .sources(TigerProxyApplication.class)
             .web(WebApplicationType.SERVLET)
             .registerShutdownHook(false)
-            .initializers()
             .run();
 
     try {
@@ -217,10 +217,12 @@ public class TigerProxyServer extends AbstractExternalTigerServer {
   @Override
   public void shutdown() {
     log.info("Stopping tiger proxy {}...", getServerId());
-    if (applicationContext != null && applicationContext.isRunning()) {
+    if (applicationContext != null && applicationContext.isActive()) {
       log.info("Triggering tiger-server shutdown for {}...", getServerId());
       getTigerProxy().close();
-      applicationContext.stop();
+      // close(), not stop(): only closing destroys the beans and the embedded tomcat, whose
+      // non-daemon threads would otherwise keep the JVM alive after the test run
+      applicationContext.close();
       setStatus(TigerServerStatus.STOPPED, "Stopped Tiger Proxy " + getServerId());
     } else {
       log.info("Skipping tiger-server shutdown for {}!", getServerId());

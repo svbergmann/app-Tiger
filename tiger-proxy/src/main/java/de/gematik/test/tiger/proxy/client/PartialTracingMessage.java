@@ -30,9 +30,11 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.ToString;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +54,12 @@ public class PartialTracingMessage {
   private final RbelSocketAddress sender;
   private final RbelSocketAddress receiver;
   @ToString.Exclude private final TracingMessageFrame messageFrame;
-  private final ZonedDateTime receivedTime = ZonedDateTime.now();
+
+  @ToString.Exclude
+  @EqualsAndHashCode.Exclude
+  @Getter(AccessLevel.NONE)
+  private final AtomicReference<ZonedDateTime> lastActivity =
+      new AtomicReference<>(ZonedDateTime.now());
 
   @Getter(AccessLevel.PRIVATE)
   private final ArrayList<TracingMessagePart> messageParts =
@@ -73,6 +80,11 @@ public class PartialTracingMessage {
       }
       expectedMessageParts = part.getNumberOfMessages();
     }
+    lastActivity.set(ZonedDateTime.now());
+  }
+
+  public ZonedDateTime getLastActivity() {
+    return lastActivity.get();
   }
 
   public void addMessageParts(PartialTracingMessage other) {

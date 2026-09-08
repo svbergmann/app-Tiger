@@ -75,11 +75,10 @@ public final class ExamplesResolver {
                         .anyMatch(tb -> tb.getLocation().getLine() == rowLine))
             .findAny();
 
-    if (examples.isPresent() && examples.get().getTableHeader().isPresent()) {
+    var tableHeader = examples.flatMap(Examples::getTableHeader);
+    if (examples.isPresent() && tableHeader.isPresent()) {
       var headers =
-          examples.get().getTableHeader().get().getCells().stream()
-              .map(TableCell::getValue)
-              .toList();
+          tableHeader.get().getCells().stream().map(TableCell::getValue).toList();
       var values = getMatchingValues(examples.get(), rowLine);
 
       int n = Math.min(headers.size(), values.getRight().size());

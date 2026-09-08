@@ -26,7 +26,7 @@
   <parent>
     <groupId>de.gematik.test</groupId>
     <artifactId>tiger</artifactId>
-    <version>4.4.2</version>
+    <version>4.4.3</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
 
@@ -137,6 +137,12 @@
                   <featuresDir>${project.basedir}/src/test/resources/features/main</featuresDir>
                 </configuration>
               </execution>
+              <execution>
+                <goals>
+                  <goal>generate-serenity-reports</goal>
+                </goals>
+                <phase>post-integration-test</phase>
+              </execution>
             </executions>
           </plugin>
 
@@ -200,20 +206,6 @@
                 <goals>
                   <goal>integration-test</goal>
                   <goal>verify</goal>
-                </goals>
-                <phase>verify</phase>
-              </execution>
-            </executions>
-          </plugin>
-
-          <plugin>
-            <groupId>de.gematik.test</groupId>
-            <artifactId>tiger-maven-plugin</artifactId>
-            <version>${project.version}</version>
-            <executions>
-              <execution>
-                <goals>
-                  <goal>generate-serenity-reports</goal>
                 </goals>
                 <phase>verify</phase>
               </execution>

@@ -40,3 +40,5 @@ README_INTERNAL.md
 /releasenotes/
 renovate.json
 AGENTS.md
+**/.npmrc
+**/package-lock.json

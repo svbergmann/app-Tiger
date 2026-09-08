@@ -20,7 +20,7 @@
 
   <groupId>de.gematik.test</groupId>
   <artifactId>tiger-bom</artifactId>
-  <version>4.4.2</version>
+  <version>4.4.3</version>
   <packaging>pom</packaging>
 
   <name>Tiger Bill of Materials</name>
@@ -59,7 +59,7 @@
                                     -->
 
     <version.apache-mime4j>0.8.14</version.apache-mime4j>
-    <version.archunit>1.4.2</version.archunit>
+    <version.archunit>1.5.0</version.archunit>
     <version.asm>9.10.1</version.asm>
 
     <version.assertj>3.27.7</version.assertj>
@@ -68,13 +68,13 @@
     <version.bouncycastle>1.85</version.bouncycastle>
     <version.central-publishing-maven-plugin>0.11.0</version.central-publishing-maven-plugin>
     <version.commons-codec>1.22.1</version.commons-codec>
-    <version.commons-collections4>4.5.0</version.commons-collections4>
+    <version.commons-collections4>4.6.0</version.commons-collections4>
     <version.commons-compress>1.28.0</version.commons-compress>
     <version.commons-io>2.22.0</version.commons-io>
     <version.commons-jexl3>3.7.0</version.commons-jexl3>
     <version.commons-lang3>3.20.0</version.commons-lang3>
     <version.commons-text>1.15.0</version.commons-text>
-    <version.cucumber>7.34.6</version.cucumber>
+    <version.cucumber>7.34.7</version.cucumber>
     <version.dnsjava>3.6.5</version.dnsjava>
     <version.dokka-maven-plugin>2.2.0</version.dokka-maven-plugin>
     <version.exec-maven-plugin>3.6.3</version.exec-maven-plugin>
@@ -100,13 +100,13 @@
     <version.java-websocket>1.6.0</version.java-websocket>
     <version.jquery>4.0.0</version.jquery>
     <version.json>20260719</version.json>
-    <version.json-schema-validator>3.0.6</version.json-schema-validator>
+    <version.json-schema-validator>3.0.7</version.json-schema-validator>
     <!-- 20240303 -->
     <version.json-unit>5.1.2</version.json-unit>
     <version.jsonschema-generator>5.0.0</version.jsonschema-generator>
-    <version.jsoup>1.23.1</version.jsoup>
+    <version.jsoup>1.23.2</version.jsoup>
     <!-- junit 6: platform and jupiter now share the same version -->
-    <version.junit>6.1.2</version.junit>
+    <version.junit>6.1.3</version.junit>
     <version.junit-platform>${version.junit}</version.junit-platform>
     <version.junit5>${version.junit}</version.junit5>
     <version.kotlin>2.4.10</version.kotlin>
@@ -131,33 +131,33 @@
     <version.maven.surefire>3.5.6</version.maven.surefire>
     <version.mockito>5.23.0</version.mockito>
     <version.mockserver>5.15.0</version.mockserver>
-    <version.netty>4.2.16.Final</version.netty>
+    <version.netty>4.2.17.Final</version.netty>
     <version.node>v24.19.0</version.node>
     <version.npm>12.0.2</version.npm>
-    <version.objenesis>3.5</version.objenesis>
-    <version.okhttp>5.4.0</version.okhttp>
+    <version.objenesis>3.6</version.objenesis>
+    <version.okhttp>5.5.0</version.okhttp>
     <version.pcap4j>1.8.2</version.pcap4j>
     <version.org.glassfish.jaxb>4.0.9</version.org.glassfish.jaxb>
-    <version.selenium>4.46.0</version.selenium>
+    <version.selenium>4.48.0</version.selenium>
     <version.serenity.core>5.3.11</version.serenity.core>
     <version.serenity.maven.plugin>5.3.11</version.serenity.maven.plugin>
     <version.slf4j>2.0.18</version.slf4j>
     <version.snakeyaml>2.6</version.snakeyaml>
     <version.sockjs-client>1.5.1</version.sockjs-client>
     <version.sonar-jacoco-listeners>5.14.0.18788</version.sonar-jacoco-listeners>
-    <version.spotless-maven-plugin>3.8.0</version.spotless-maven-plugin>
+    <version.spotless-maven-plugin>3.10.1</version.spotless-maven-plugin>
     <version.spotless.google-java-format>1.28.0</version.spotless.google-java-format>
-    <version.spring-boot>4.1.0</version.spring-boot>
-    <version.springdoc>3.0.3</version.springdoc>
+    <version.spring-boot>4.1.1</version.spring-boot>
+    <version.springdoc>3.1.0</version.springdoc>
     <version.stomp-websocket>2.3.4</version.stomp-websocket>
-    <version.swagger-parser>2.1.45</version.swagger-parser>
+    <version.swagger-parser>2.1.47</version.swagger-parser>
     <version.system-stubs>2.1.8</version.system-stubs>
     <version.unirest>4.10.1</version.unirest>
     <version.velocity>2.3</version.velocity>
     <version.webjars-locator-core>0.59</version.webjars-locator-core>
     <version.wiremock>3.13.2</version.wiremock>
-    <version.xmlunit>2.12.0</version.xmlunit>
-    <version.byte-buddy>1.18.11-jdk5</version.byte-buddy>
+    <version.xmlunit>2.13.0</version.xmlunit>
+    <version.byte-buddy>1.18.12-jdk5</version.byte-buddy>
   </properties>
 
   <dependencyManagement>
@@ -261,7 +261,7 @@
       <dependency>
         <groupId>tools.jackson</groupId>
         <artifactId>jackson-bom</artifactId>
-        <version>3.2.1</version>
+        <version>3.2.2</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -278,7 +278,7 @@
       <dependency>
         <groupId>com.github.oshi</groupId>
         <artifactId>oshi-core</artifactId>
-        <version>7.4.2</version>
+        <version>7.6.0</version>
       </dependency>
       <dependency>
         <groupId>com.github.victools</groupId>
@@ -318,7 +318,7 @@
       <dependency>
         <groupId>com.microsoft.playwright</groupId>
         <artifactId>playwright</artifactId>
-        <version>1.61.0</version>
+        <version>1.62.0</version>
       </dependency>
       <dependency>
         <groupId>com.networknt</groupId>
@@ -349,78 +349,78 @@
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-common</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-canopy</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-canopy-client</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-canopy-extension</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-httpbin</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-httpbin</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
         <classifier>jar-with-dependencies</classifier>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-java-agent</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-maven-plugin</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-proxy</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-proxy-scrollable-webui</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-rbel</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-test-lib</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-test-utils</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-testenv-mgr</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>de.gematik.test</groupId>
         <artifactId>tiger-topology-visualizer</artifactId>
-        <version>4.4.2</version>
+        <version>4.4.3</version>
       </dependency>
       <dependency>
         <groupId>dnsjava</groupId>
@@ -430,7 +430,7 @@
       <dependency>
         <groupId>io.github.classgraph</groupId>
         <artifactId>classgraph</artifactId>
-        <version>4.8.186</version>
+        <version>4.8.194</version>
       </dependency>
       <dependency>
         <groupId>io.github.oshai</groupId>
@@ -497,7 +497,7 @@
         <!-- conflict between datafaker and swagger-parser -->
         <groupId>com.googlecode.libphonenumber</groupId>
         <artifactId>libphonenumber</artifactId>
-        <version>9.0.36</version>
+        <version>9.0.38</version>
       </dependency>
       <dependency>
         <groupId>net.java.dev.jna</groupId>
@@ -628,7 +628,7 @@
       <dependency>
         <groupId>org.apache.httpcomponents.client5</groupId>
         <artifactId>httpclient5</artifactId>
-        <version>5.6.3</version>
+        <version>5.6.4</version>
       </dependency>
       <dependency>
         <groupId>org.apache.james</groupId>
@@ -703,12 +703,12 @@
       <dependency>
         <groupId>org.checkerframework</groupId>
         <artifactId>checker-qual</artifactId>
-        <version>4.2.1</version>
+        <version>4.2.2</version>
       </dependency>
       <dependency>
         <groupId>org.codehaus.plexus</groupId>
         <artifactId>plexus-classworlds</artifactId>
-        <version>2.12.0</version>
+        <version>2.12.1</version>
       </dependency>
       <dependency>
         <!-- pin to solve dependency convergence between maven-replacer-plugin and serenity-maven-plugin -->
@@ -719,12 +719,12 @@
       <dependency>
         <groupId>org.codehaus.plexus</groupId>
         <artifactId>plexus-utils</artifactId>
-        <version>4.0.3</version>
+        <version>4.1.0</version>
       </dependency>
       <dependency>
         <groupId>org.codehaus.plexus</groupId>
         <artifactId>plexus-xml</artifactId>
-        <version>4.1.1</version>
+        <version>4.2.0</version>
       </dependency>
       <dependency>
         <groupId>org.dom4j</groupId>
@@ -734,7 +734,7 @@
       <dependency>
         <groupId>org.freemarker</groupId>
         <artifactId>freemarker</artifactId>
-        <version>2.3.34</version>
+        <version>2.3.35</version>
       </dependency>
       <dependency>
         <groupId>org.hamcrest</groupId>
@@ -749,7 +749,7 @@
       <dependency>
         <groupId>org.javassist</groupId>
         <artifactId>javassist</artifactId>
-        <version>3.32.0-GA</version>
+        <version>3.33.0-GA</version>
       </dependency>
       <dependency>
         <groupId>org.java-websocket</groupId>
@@ -937,7 +937,7 @@
       <dependency>
         <groupId>org.webjars.npm</groupId>
         <artifactId>dayjs</artifactId>
-        <version>1.11.21</version>
+        <version>1.11.23</version>
       </dependency>
       <dependency>
         <groupId>org.wiremock</groupId>

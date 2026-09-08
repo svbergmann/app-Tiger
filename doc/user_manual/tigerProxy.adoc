@@ -188,11 +188,6 @@ servers:
         tcpIdleTimeoutInSeconds: 5.0        # OPTIONAL TCP keep-alive timeout in seconds (default: 5), null = disabled
         modifierPlugins: []               # OPTIONAL plugin classes to modify traffic on the TCP layer before forwarding
 
-      # ----Notes on messages---------------------------------------
-      notes:
-        - message: "This is a note"
-          jexlCriterion: "isRequest && path == '$.method'"
-
       logConnectMessages: false   # if set to true, the tiger proxy will log HTTP CONNECT messages (used for tunneling HTTPS through a forward proxy), default is false
       # Folders containing keys (e.g. PEM, P12) loaded into RBel for decrypting traffic during analysis
       keyFolders:
@@ -212,13 +207,16 @@ servers:
       # ----Buffer sizes--------------------------------------------
       rbelBufferSizeInMb: 1024
       stompClientBufferSizeInMb: 1
+      stompServerSendBufferSizeInMb: 16
+      stompServerSendTimeLimitInSeconds: 20
+      stompHeartbeatInSeconds: 10
       perMessageBufferSizeInMb: 100
       skipParsingWhenMessageLargerThanKb: 8000
       skipDisplayWhenMessageLargerThanKb: 512
 
       # ----Timeouts------------------------------------------------
       connectionTimeoutInSeconds: 10            # Timeout for establishing connections (default: 10)
-      maximumPartialMessageAgeInSeconds: 300    # Maximum age of incomplete/partial messages before they are discarded (default: 300)
+      maximumPartialMessageAgeInSeconds: 30     # How long an incomplete message may go without a new part before it is discarded (default: 30)
       waitForPreviousMessageBeforeParsingInSeconds: 5.0
       previousMessageTimeoutDetectionGracePeriodInSeconds: 10.0
       previousMessageTimeoutDetectionTimeGapThresholdInSeconds: 30.0
@@ -1118,22 +1116,6 @@ For example, if you set `tcpIdleTimeoutInSeconds` to 5 seconds, the keep-alive p
 How it works:
 1. Keep-alive pings are sent at the configured interval on idle connections 2. Each ping resets the socket read timeout counter 3. As long as pings arrive before the timeout expires, the connection stays open 4. When the client sends actual data, the ping cycle resumes after the next idle period
 
-=== Adding notes to messages
-
-To add notes to certain messages, you can add a list of criteria with messages that shall be added to any message in the rbel log matching the specific criterion.
-
-[source,yaml]
-----
-tigerProxy:
-    tigerProxyConfiguration:
-      proxyId: meshProxy2
-      notes:
-        - message: "This is a note on the HTTP method"
-          jexlCriterion: "isRequest && path == '$.method'"
-        - message: "Hackers were here..."
-          jexlCriterion: "element.decryptedUsingKeyWithId == 'mySuperSecretKey'"
-----
-
 === Rbel Parsing
 
 For a detailed description of RBelPath, please refer to the xref:tigerProxy.adoc#_rbel_path_details[Understanding RBelPath].
@@ -1226,7 +1208,10 @@ Several buffer-size properties allow fine-tuning of memory usage:
 tigerProxy:
   tigerProxyConfiguration:
     rbelBufferSizeInMb: 1024          # Limits the RBel buffer to approximately this size (default: 1024)
-    stompClientBufferSizeInMb: 1      # Buffer size for STOMP client connections (default: 1)
+    stompClientBufferSizeInMb: 1      # Buffer size for reassembling an inbound STOMP message on the remote-proxy client (default: 1)
+    stompServerSendBufferSizeInMb: 16 # Pending-send buffer per tracing WebSocket session before the tracing broker closes it as unreliable (default: 16)
+    stompServerSendTimeLimitInSeconds: 20 # How long the tracing broker may take to flush a message to a session before giving up on it (default: 20)
+    stompHeartbeatInSeconds: 10       # Interval at which both ends of a tracing connection exchange STOMP heartbeats (default: 10)
     perMessageBufferSizeInMb: 100     # Maximum buffer size per single message (default: 100)
     skipParsingWhenMessageLargerThanKb: 8000   # Skip RBel parsing for messages larger than this (default: 8000)
     skipDisplayWhenMessageLargerThanKb: 512    # Skip display for messages larger than this (default: 512)

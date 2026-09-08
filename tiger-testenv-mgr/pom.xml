@@ -27,7 +27,7 @@
   <parent>
     <groupId>de.gematik.test</groupId>
     <artifactId>tiger</artifactId>
-    <version>4.4.2</version>
+    <version>4.4.3</version>
     <relativePath>../pom.xml</relativePath>
   </parent>
   <artifactId>tiger-testenv-mgr</artifactId>
@@ -265,7 +265,7 @@
             </goals>
             <phase>generate-resources</phase>
             <configuration>
-              <arguments>ci</arguments>
+              <arguments>${frontend.npm.install.command}</arguments>
             </configuration>
           </execution>
 
@@ -373,7 +373,7 @@
       <plugin>
         <groupId>org.openapitools</groupId>
         <artifactId>openapi-generator-maven-plugin</artifactId>
-        <version>7.24.0</version>
+        <version>7.25.0</version>
         <executions>
           <execution>
             <id>generate java code</id>
@@ -496,4 +496,28 @@
       </plugin>
     </plugins>
   </build>
+  <profiles>
+    <profile>
+      <id>npm-install-with-lockfile</id>
+      <activation>
+        <file>
+          <exists>${project.basedir}/src/frontend/package-lock.json</exists>
+        </file>
+      </activation>
+      <properties>
+        <frontend.npm.install.command>ci</frontend.npm.install.command>
+      </properties>
+    </profile>
+    <profile>
+      <id>npm-install-without-lockfile</id>
+      <activation>
+        <file>
+          <missing>${project.basedir}/src/frontend/package-lock.json</missing>
+        </file>
+      </activation>
+      <properties>
+        <frontend.npm.install.command>install</frontend.npm.install.command>
+      </properties>
+    </profile>
+  </profiles>
 </project>

@@ -157,6 +157,11 @@ public class RbelErpVauDecrpytionConverter extends RbelConverterPlugin {
       RbelKey decryptionKey,
       RbelElement parentNode) {
     String[] vauMessageParts = new String(decryptedBytes, UTF_8).split(" ", 5);
+    if (vauMessageParts.length < 5) {
+      throw new RbelConversionException(
+          "Malformed VAU cleartext request: expected 5 space-separated parts, got "
+              + vauMessageParts.length);
+    }
     final SecretKeySpec responseKey = buildAesKeyFromHex(vauMessageParts[3]);
     converter.getRbelKeyManager().addKey("VAU Response-Key", responseKey, 0);
     return Optional.of(
@@ -180,6 +185,11 @@ public class RbelErpVauDecrpytionConverter extends RbelConverterPlugin {
       RbelKey keyUsed,
       RbelElement parentNode) {
     String[] vauMessageParts = new String(decryptedBytes, UTF_8).split(" ", 3);
+    if (vauMessageParts.length < 3) {
+      throw new RbelConversionException(
+          "Malformed VAU cleartext response: expected 3 space-separated parts, got "
+              + vauMessageParts.length);
+    }
     return Optional.of(
         RbelVauErpFacet.builder()
             .message(converter.convertElement(vauMessageParts[2], parentNode))

@@ -22,8 +22,6 @@ package de.gematik.rbellogger.util;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
@@ -31,21 +29,24 @@ import org.apache.commons.lang3.StringUtils;
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class RbelInternetAddressParser {
 
-  private static final Map<String, RbelInternetAddress> CACHE = new ConcurrentHashMap<>();
+  /**
+   * Canonical name for every loopback address. Deliberately a constant instead of a reverse lookup:
+   * the local hosts file decides which alias 127.0.0.1 resolves back to ("localhost",
+   * "view-localhost", "kubernetes.docker.internal", ...), which would make recorded traffic depend
+   * on the machine that recorded it.
+   */
+  public static final String LOOPBACK_HOSTNAME = "localhost";
 
-  private static final String cachedLoopbackHostname = initLoopbackHostname();
-
-  private static String initLoopbackHostname() {
-    return InetAddress.getLoopbackAddress().getHostName();
-  }
-
+  /**
+   * Splits an address string into hostname and IP without ever consulting DNS. Resolution belongs
+   * to {@link RbelInternetAddress#toInetAddress()}, the one place that caches it with an expiry.
+   */
   public static RbelInternetAddress parseInetAddress(String addressString) {
     if (addressString == null || addressString.trim().isEmpty()) {
       throw new IllegalArgumentException("Address string cannot be null or empty.");
     }
 
-    return CACHE.computeIfAbsent(
-        addressString, RbelInternetAddressParser::parseInetAddressUncached);
+    return parseInetAddressUncached(addressString);
   }
 
   private static RbelInternetAddress parseInetAddressUncached(String addressString) {
@@ -65,13 +66,15 @@ public class RbelInternetAddressParser {
   }
 
   private static RbelInternetAddress parseRegularHostname(String addressString) {
+    if (!isLikelyIpAddress(addressString)) {
+      return new RbelInternetAddress(addressString, null);
+    }
     try {
+      // A literal. getByName parses the digits and does not consult DNS, so this stays local.
       InetAddress inetAddress = InetAddress.getByName(addressString);
-      byte[] ipBytes = inetAddress.getAddress();
-      String hostname = computeHostname(addressString, inetAddress);
-      return new RbelInternetAddress(hostname, ipBytes);
+      return new RbelInternetAddress(hostnameWithoutLookup(inetAddress), inetAddress.getAddress());
     } catch (UnknownHostException e) {
-      if (addressString.equals(cachedLoopbackHostname)) {
+      if (addressString.equals(LOOPBACK_HOSTNAME)) {
         return new RbelInternetAddress(
             addressString, InetAddress.getLoopbackAddress().getAddress());
       }
@@ -79,18 +82,21 @@ public class RbelInternetAddressParser {
     }
   }
 
-  private static String computeHostname(String addressString, InetAddress inetAddress) {
-    String hostname;
-    if (isLikelyIpAddress(addressString)) {
-      if (inetAddress.isLoopbackAddress()) {
-        hostname = cachedLoopbackHostname;
-      } else {
-        hostname = null;
-      }
-    } else {
-      hostname = inetAddress.getHostName();
+  /**
+   * Determines the hostname of an already resolved address without ever consulting the name
+   * service. {@link InetAddress#toString()} renders the hostname the address was created with (an
+   * empty string when it was built from raw bytes, as is the case for every accepted connection)
+   * and is documented to skip the reverse lookup that {@link InetAddress#getHostName()} would
+   * perform. That lookup blocks for up to the resolver timeout and yields whichever alias the local
+   * hosts file happens to list first, so addresses without a hostname are described by their IP
+   * instead - except for loopback, which always gets {@link #LOOPBACK_HOSTNAME}.
+   */
+  static String hostnameWithoutLookup(InetAddress inetAddress) {
+    final String knownHostname = StringUtils.substringBefore(inetAddress.toString(), "/");
+    if (!knownHostname.isEmpty()) {
+      return knownHostname;
     }
-    return hostname;
+    return inetAddress.isLoopbackAddress() ? LOOPBACK_HOSTNAME : null;
   }
 
   /**

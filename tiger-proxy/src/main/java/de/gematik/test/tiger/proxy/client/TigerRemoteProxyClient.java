@@ -54,6 +54,8 @@ import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -61,13 +63,13 @@ import javax.annotation.Nullable;
 import kong.unirest.core.GenericType;
 import kong.unirest.core.Unirest;
 import lombok.Getter;
-import lombok.Setter;
 import lombok.val;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.springframework.http.MediaType;
 import org.springframework.messaging.converter.JacksonJsonMessageConverter;
 import org.springframework.messaging.simp.stomp.StompSession;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.util.Assert;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
@@ -85,6 +87,10 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   public static final String WS_TRACING = "/topic/traces";
   public static final String WS_DATA = "/topic/data";
   public static final String WS_ERRORS = "/topic/errors";
+  private static final Duration EXPIRED_MESSAGE_CHECK_INTERVAL = Duration.ofSeconds(1);
+  private static final Duration REDOWNLOAD_RECHECK_INTERVAL = Duration.ofSeconds(1);
+  private static final Duration INITIAL_RECONNECT_BACKOFF = Duration.ofSeconds(1);
+  private static final Duration MAX_RECONNECT_BACKOFF = Duration.ofSeconds(30);
   @Getter private final String remoteProxyUrl;
   @Getter private String connectedRemoteProxyUrl;
   private final String remoteProxyControlUrl;
@@ -92,17 +98,16 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   @Getter private final List<TigerExceptionDto> receivedRemoteExceptions = new ArrayList<>();
 
-  @Getter
-  private final Map<String, PartialTracingMessage> partiallyReceivedMessageMap =
-      new LinkedHashMap<>();
-
   @Getter private final MultipleBinaryConnectionParser binaryChunksBuffer;
 
   @Getter private final TigerStompSessionHandler tigerStompSessionHandler;
   @Nullable private final TigerProxy masterTigerProxy;
-  @Getter @Setter private Duration maximumPartialMessageAge;
+  @Getter private final PartialMessageAssembler messageAssembler;
   private final AtomicReference<StompSession> stompSession = new AtomicReference<>();
   @Getter private final AtomicReference<String> lastMessageUuid = new AtomicReference<>();
+  private final ThreadPoolTaskScheduler heartbeatScheduler;
+  private final AtomicBoolean reconnectInFlight = new AtomicBoolean(false);
+  private final AtomicInteger consecutiveConnectFailures = new AtomicInteger(0);
   private final SockJsClient webSocketClient;
   private final int connectionTimeoutInSeconds;
 
@@ -150,9 +155,19 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     tigerProxyStompClient.setMessageConverter(messageConverter);
     tigerProxyStompClient.setInboundMessageSizeLimit(
         configuration.getStompClientBufferSizeInMb() * MB);
+    heartbeatScheduler = buildHeartbeatScheduler();
+    tigerProxyStompClient.setTaskScheduler(heartbeatScheduler);
+    final long heartbeat =
+        Duration.ofSeconds(configuration.getStompHeartbeatInSeconds()).toMillis();
+    tigerProxyStompClient.setDefaultHeartbeat(new long[] {heartbeat, heartbeat});
     tigerStompSessionHandler = new TigerStompSessionHandler(this);
-    maximumPartialMessageAge =
-        Duration.ofSeconds(configuration.getMaximumPartialMessageAgeInSeconds());
+    messageAssembler =
+        new PartialMessageAssembler(
+            log,
+            () -> getRbelLogger().getRbelConverter().getKnownMessageUuids(),
+            this::signalNewCompletedMessage,
+            Duration.ofSeconds(configuration.getMaximumPartialMessageAgeInSeconds()));
+    scheduleExpiredMessageRemoval();
     connectionTimeoutInSeconds = configuration.getConnectionTimeoutInSeconds();
 
     addRbelMessageListener(this::signalNewCompletedMessage);
@@ -160,6 +175,29 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     converter.addConverter(new TigerProxyMessageDeletedPlugin(this));
     converter.addClearHistoryCallback(this::discardDelayedParsingTasks);
     converter.addMessageRemovedFromHistoryCallback(this::handleMessageRemovalFromHistory);
+  }
+
+  private void scheduleExpiredMessageRemoval() {
+    if (meshHandlerPool.isShutdown()) {
+      return;
+    }
+    meshHandlerPool.schedule(
+        this::removeExpiredMessagesAndRearm,
+        EXPIRED_MESSAGE_CHECK_INTERVAL.toMillis(),
+        TimeUnit.MILLISECONDS);
+  }
+
+  private void removeExpiredMessagesAndRearm() {
+    try {
+      messageAssembler.removeExpiredMessages();
+    } catch (RuntimeException e) {
+      log.warn(
+          "Could not remove expired partial messages, retrying in {}",
+          EXPIRED_MESSAGE_CHECK_INTERVAL,
+          e);
+    } finally {
+      scheduleExpiredMessageRemoval();
+    }
   }
 
   public void connect() {
@@ -212,31 +250,11 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
   }
 
   private void downloadTrafficFromRemoteProxy() {
-    discardIncompletePartialMessages();
-    new TigerRemoteTrafficDownloader(this).execute();
-  }
-
-  /**
-   * Removes any partially-received (incomplete) messages from the in-flight map and unregisters
-   * their UUIDs, so that the traffic downloader is allowed to re-fetch the full messages from the
-   * remote proxy's HTTP endpoint. Without this, a UUID that was partially received over WebSocket
-   * before the session was killed would be silently skipped during the download.
-   */
-  private void discardIncompletePartialMessages() {
-    synchronized (partiallyReceivedMessageMap) {
-      partiallyReceivedMessageMap
-          .entrySet()
-          .removeIf(
-              entry -> {
-                if (!entry.getValue().isComplete()) {
-                  log.atDebug()
-                      .addArgument(entry::getKey)
-                      .log("Discarding incomplete partial message {} before traffic download");
-                  getRbelLogger().getRbelConverter().getKnownMessageUuids().remove(entry.getKey());
-                  return true;
-                }
-                return false;
-              });
+    var discardedUuids = messageAssembler.discardIncompleteMessagesForRedownload();
+    try {
+      new TigerRemoteTrafficDownloader(this).execute();
+    } finally {
+      messageAssembler.finishRedownload(discardedUuids);
     }
   }
 
@@ -247,48 +265,103 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     if (isShuttingDown()) {
       return;
     }
-    connectedRemoteProxyUrl = waitForRemoteTigerProxyToBeOnline(remoteProxyControlUrl);
+    if (!claimTheConnectionAttempt()) {
+      log.debug(
+          "Connection attempt to {} already in progress, ignoring overlapping request",
+          remoteProxyUrl);
+      return;
+    }
+    try {
+      connectedRemoteProxyUrl = waitForRemoteTigerProxyToBeOnline(remoteProxyControlUrl);
+    } catch (RuntimeException e) {
+      reconnectInFlight.set(false);
+      consecutiveConnectFailures.incrementAndGet();
+      throw e;
+    }
     if (isShuttingDown()) {
+      reconnectInFlight.set(false);
       return;
     }
     log.info("remote proxy at {} is online, now connecting...", connectedRemoteProxyUrl);
     final var tracingWebSocketUrl = getTracingWebSocketUrl(connectedRemoteProxyUrl);
+    tigerStompSessionHandler.setOnConnectedCallback(
+        () -> meshHandlerPool.execute(() -> finishConnecting(downloadTraffic)));
     tigerProxyStompClient
         .connectAsync(tracingWebSocketUrl, tigerStompSessionHandler)
         .orTimeout(connectionTimeoutInSeconds, TimeUnit.SECONDS)
-        .thenApply(
+        .thenAccept(
             stompSessionInCallback -> {
               log.info(
                   "Successfully opened stomp session {} to url {}",
                   stompSessionInCallback.getSessionId(),
                   tracingWebSocketUrl);
-              webSocketConnectionStartTime.set(ZonedDateTime.now());
-              remoteClockOffset =
-                  ClockSkewEstimator.estimateOffset(
-                          connectedRemoteProxyUrl,
-                          getTigerProxyConfiguration().getClockSyncSamples())
-                      .orElse(Duration.ZERO);
-              tigerStompSessionHandler.setOnConnectedCallback(
-                  () -> {
-                    log.info(
-                        "Connected to remote proxy at {}, now downloading traffic...",
-                        connectedRemoteProxyUrl);
-                    if (downloadTraffic) {
-                      downloadTrafficFromRemoteProxy();
-                    }
-                    log.info(
-                        "Successfully downloaded traffic from remote proxy at {}",
-                        connectedRemoteProxyUrl);
-                  });
-              return stompSessionInCallback;
+              stompSession.set(stompSessionInCallback);
             })
-        .thenAccept(stompSession::set)
         .exceptionally(
             throwable -> {
+              reconnectInFlight.set(false);
+              consecutiveConnectFailures.incrementAndGet();
               throw new TigerRemoteProxyClientException(
                   "Exception while opening tracing-connection to " + tracingWebSocketUrl,
                   throwable);
             });
+  }
+
+  /**
+   * Schedules a reconnect after a delay that grows with the number of consecutive failures, so a
+   * permanently unreachable remote does not get hammered with back-to-back attempts.
+   */
+  void scheduleReconnect(TigerStompSessionHandler tigerStompSessionHandler) {
+    final var delay = computeReconnectBackoff(consecutiveConnectFailures.get());
+    log.info("Reconnecting to {} in {}", remoteProxyUrl, delay);
+    meshHandlerPool.schedule(
+        () ->
+            connectToRemoteUrl(
+                tigerStompSessionHandler,
+                getTigerProxyConfiguration().getConnectionTimeoutInSeconds(),
+                true),
+        delay.toMillis(),
+        TimeUnit.MILLISECONDS);
+  }
+
+  private static Duration computeReconnectBackoff(int consecutiveFailures) {
+    final var delay =
+        INITIAL_RECONNECT_BACKOFF.multipliedBy(1L << Math.min(consecutiveFailures, 5));
+    return delay.compareTo(MAX_RECONNECT_BACKOFF) > 0 ? MAX_RECONNECT_BACKOFF : delay;
+  }
+
+  private ThreadPoolTaskScheduler buildHeartbeatScheduler() {
+    val scheduler = new ThreadPoolTaskScheduler();
+    scheduler.setThreadNamePrefix("TigerProxyClientHeartbeat-%s-".formatted(getName()));
+    scheduler.setPoolSize(1);
+    scheduler.setDaemon(true);
+    scheduler.initialize();
+    return scheduler;
+  }
+
+  private boolean claimTheConnectionAttempt() {
+    return reconnectInFlight.compareAndSet(false, true);
+  }
+
+  private void finishConnecting(boolean downloadTraffic) {
+    try {
+      webSocketConnectionStartTime.set(ZonedDateTime.now());
+      remoteClockOffset =
+          ClockSkewEstimator.estimateOffset(
+                  connectedRemoteProxyUrl, getTigerProxyConfiguration().getClockSyncSamples())
+              .orElse(Duration.ZERO);
+      log.info(
+          "Connected to remote proxy at {}, now downloading traffic...", connectedRemoteProxyUrl);
+      if (downloadTraffic) {
+        downloadTrafficFromRemoteProxy();
+      }
+      log.info("Successfully downloaded traffic from remote proxy at {}", connectedRemoteProxyUrl);
+      consecutiveConnectFailures.set(0);
+    } catch (RuntimeException e) {
+      log.error("Error while finishing connection setup to {}", connectedRemoteProxyUrl, e);
+    } finally {
+      reconnectInFlight.set(false);
+    }
   }
 
   @Override
@@ -479,78 +552,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     }
     tigerProxyStompClient.stop();
     webSocketClient.stop();
+    heartbeatScheduler.shutdown();
     meshHandlerPool.shutdownNow();
-  }
-
-  void receiveNewMessagePart(TracingMessagePart tracingMessagePart) {
-    final PartialTracingMessage tracingMessage =
-        retrieveOrInitializePartialMessage(
-            tracingMessagePart.getUuid(), PartialTracingMessage.builder().build());
-
-    if (tracingMessage == null) {
-      log.atTrace()
-          .addArgument(tracingMessagePart::getUuid)
-          .log("Discarding message part for already-known message {}");
-      return;
-    }
-    tracingMessage.addMessagePart(tracingMessagePart);
-    checkForCompletion(tracingMessage, tracingMessagePart.getUuid());
-  }
-
-  private PartialTracingMessage retrieveOrInitializePartialMessage(
-      String uuid, PartialTracingMessage message) {
-    synchronized (partiallyReceivedMessageMap) {
-      if (partiallyReceivedMessageMap.containsKey(uuid)) {
-        return partiallyReceivedMessageMap.get(uuid);
-      }
-      if (!getRbelLogger().getRbelConverter().getKnownMessageUuids().add(uuid)) {
-        return null; // already known (downloaded or earlier push) — discard
-      }
-      partiallyReceivedMessageMap.put(uuid, message);
-      return message;
-    }
-  }
-
-  public void initOrUpdateMessagePart(String uuid, PartialTracingMessage partialTracingMessage) {
-    PartialTracingMessage oldMessage = null;
-    synchronized (partiallyReceivedMessageMap) {
-      if (partiallyReceivedMessageMap.containsKey(uuid)) {
-        oldMessage = partiallyReceivedMessageMap.get(uuid);
-      } else if (!getRbelLogger().getRbelConverter().getKnownMessageUuids().add(uuid)) {
-        log.trace("Discarding metadata for already-known message {}", uuid);
-        return;
-      }
-      partiallyReceivedMessageMap.put(uuid, partialTracingMessage);
-    }
-    if (oldMessage != null) {
-      partialTracingMessage.addMessageParts(oldMessage);
-    }
-    checkForCompletion(partialTracingMessage, uuid);
-  }
-
-  private void checkForCompletion(PartialTracingMessage tracingMessage, String messageUuid) {
-    if (tracingMessage.isComplete()) {
-      tracingMessage.getMessageFrame().checkForCompletePairAndPropagateIfComplete();
-      partiallyReceivedMessageMap.remove(messageUuid);
-    }
-  }
-
-  public void triggerPartialMessageCleanup() {
-    final ZonedDateTime cutoff = ZonedDateTime.now().minus(maximumPartialMessageAge);
-    synchronized (partiallyReceivedMessageMap) {
-      final Iterator<PartialTracingMessage> entryIterator =
-          partiallyReceivedMessageMap.values().iterator();
-      while (entryIterator.hasNext()) {
-        PartialTracingMessage next = entryIterator.next();
-        log.trace("Trying to remove {}, cutoff is {}", next.getReceivedTime(), cutoff);
-        if (cutoff.isAfter(next.getReceivedTime())) {
-          entryIterator.remove();
-        } else {
-          // everything after this is newer than the cutoff, so we can stop here
-          break;
-        }
-      }
-    }
   }
 
   public boolean isConnected() {
@@ -623,8 +626,24 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
 
   private void discardDelayedParsingTasks() {
     synchronized (parsingTasksWaitingForUuid) {
+      logDiscardedParsingTasks();
       parsingTasksWaitingForUuid.clear();
       removedMessageUuids.clear();
+    }
+  }
+
+  private void logDiscardedParsingTasks() {
+    val discardedTasks =
+        parsingTasksWaitingForUuid.entries().stream()
+            .mapToInt(waitingTasks -> waitingTasks.getValue().size())
+            .sum();
+    if (discardedTasks > 0) {
+      log.warn(
+          "Discarding {} parsing task(s) from {} which were still waiting for {} predecessor"
+              + " message(s). These messages will not be parsed.",
+          discardedTasks,
+          remoteProxyUrl,
+          parsingTasksWaitingForUuid.size());
     }
   }
 
@@ -687,8 +706,7 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
           .getOrPutDefault(previousMessageUuid, LinkedList::new)
           .add(parseMessageTask);
     }
-    scheduleDirectParsingIfPreviousMessageHasNotEvenPartiallyArrived(
-        thisMessageUuid, previousMessageUuid, parseMessageTask);
+    scheduleReleaseCheck(thisMessageUuid, previousMessageUuid, parseMessageTask);
   }
 
   private boolean scheduleDirectlyAfterOldPreviousMessage(
@@ -741,40 +759,98 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
     return false;
   }
 
-  private void scheduleDirectParsingIfPreviousMessageHasNotEvenPartiallyArrived(
-      String messageUuid, String previousMessageUuid, Runnable task) {
-    val parsingTimeoutInSeconds =
-        getTigerProxyConfiguration().getWaitForPreviousMessageBeforeParsingInSeconds();
+  private void scheduleReleaseCheck(String messageUuid, String previousMessageUuid, Runnable task) {
+    scheduleReleaseCheck(messageUuid, previousMessageUuid, task, previousMessageTimeout());
+  }
+
+  private void scheduleReleaseCheck(
+      String messageUuid, String previousMessageUuid, Runnable task, Duration delay) {
+    if (meshHandlerPool.isShutdown()) {
+      return;
+    }
     meshHandlerPool.schedule(
-        () -> {
-          boolean schedule = false;
-          synchronized (parsingTasksWaitingForUuid) {
-            val waitingTasks = parsingTasksWaitingForUuid.get(previousMessageUuid).orElse(null);
-            if (waitingTasks != null
-                && waitingTasks.contains(task)
-                && !partiallyReceivedMessageMap.containsKey(previousMessageUuid) // not yet arriving
-                && !getRbelLogger()
-                    .getRbelConverter()
-                    .getKnownMessageUuids()
-                    .contains(previousMessageUuid) // not parsing
-                && !removedMessageUuids.contains(previousMessageUuid) // not removed
-            ) {
-              removeFromWaitingTasks(previousMessageUuid, task, waitingTasks);
-              schedule = true;
-            }
-          }
-          if (schedule) {
-            meshHandlerPool.submit(task);
-            log.warn(
-                "Parsing task for message {} triggered by timeout after {} seconds. "
-                    + "Previous message {} did not even arrive partially.",
-                messageUuid,
-                parsingTimeoutInSeconds,
-                previousMessageUuid);
-          }
-        },
-        (int) (parsingTimeoutInSeconds * 1000),
+        () -> releaseIfPreviousMessageWillNotArrive(messageUuid, previousMessageUuid, task),
+        delay.toMillis(),
         TimeUnit.MILLISECONDS);
+  }
+
+  private void releaseIfPreviousMessageWillNotArrive(
+      String messageUuid, String previousMessageUuid, Runnable task) {
+    if (!isWaitingFor(previousMessageUuid, task)) {
+      return;
+    }
+    if (messageAssembler.isPendingRedownload(previousMessageUuid)) {
+      scheduleReleaseCheck(messageUuid, previousMessageUuid, task, REDOWNLOAD_RECHECK_INTERVAL);
+      return;
+    }
+    val remainingAssemblyTime = messageAssembler.remainingAssemblyTime(previousMessageUuid);
+    val pendingAssembly = remainingAssemblyTime.filter(remaining -> remaining.toMillis() > 0);
+    if (pendingAssembly.isPresent()) {
+      scheduleReleaseCheck(messageUuid, previousMessageUuid, task, pendingAssembly.get());
+      return;
+    }
+    val assemblyWasAbandoned = remainingAssemblyTime.isPresent();
+    if (stopWaitingFor(previousMessageUuid, task, assemblyWasAbandoned)) {
+      meshHandlerPool.submit(task);
+      logReleaseOfWaitingTask(messageUuid, previousMessageUuid, assemblyWasAbandoned);
+    }
+  }
+
+  private boolean isWaitingFor(String previousMessageUuid, Runnable task) {
+    synchronized (parsingTasksWaitingForUuid) {
+      return parsingTasksWaitingForUuid
+          .get(previousMessageUuid)
+          .map(waitingTasks -> waitingTasks.contains(task))
+          .orElse(false);
+    }
+  }
+
+  private boolean stopWaitingFor(
+      String previousMessageUuid, Runnable task, boolean previousMessageAbandoned) {
+    synchronized (parsingTasksWaitingForUuid) {
+      val waitingTasks = parsingTasksWaitingForUuid.get(previousMessageUuid).orElse(null);
+      if (waitingTasks == null || !waitingTasks.contains(task)) {
+        return false;
+      }
+      if (removedMessageUuids.contains(previousMessageUuid)) {
+        return false;
+      }
+      if (!previousMessageAbandoned && isKnownToConverter(previousMessageUuid)) {
+        return false;
+      }
+      removeFromWaitingTasks(previousMessageUuid, task, waitingTasks);
+      return true;
+    }
+  }
+
+  private boolean isKnownToConverter(String messageUuid) {
+    return getRbelLogger().getRbelConverter().getKnownMessageUuids().contains(messageUuid);
+  }
+
+  private void logReleaseOfWaitingTask(
+      String messageUuid, String previousMessageUuid, boolean previousMessageAbandoned) {
+    if (previousMessageAbandoned) {
+      log.warn(
+          "Parsing task for message {} triggered because previous message {} stayed incomplete for"
+              + " more than {}.",
+          messageUuid,
+          previousMessageUuid,
+          messageAssembler.getMaximumMessageAge());
+    } else {
+      log.warn(
+          "Parsing task for message {} triggered by timeout after {}. Previous message {} did not"
+              + " even arrive partially.",
+          messageUuid,
+          previousMessageTimeout(),
+          previousMessageUuid);
+    }
+  }
+
+  private Duration previousMessageTimeout() {
+    return Duration.ofMillis(
+        (long)
+            (getTigerProxyConfiguration().getWaitForPreviousMessageBeforeParsingInSeconds()
+                * 1000));
   }
 
   private void removeFromWaitingTasks(String messageUuid, Runnable task, List<Runnable> tasks) {
@@ -802,7 +878,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
                     .addArgument(msg::getUuid)
                     .addArgument(() -> String.join(", ", sourceUuidsToSignal))
                     .log(
-                        "Signaling source UUIDs for transformed message effectiveUuid={} sourceUuids=[{}]");
+                        "Signaling source UUIDs for transformed message effectiveUuid={}"
+                            + " sourceUuids=[{}]");
                 sourceUuidsToSignal.forEach(this::signalNewCompletedMessage);
               }
             });
@@ -825,7 +902,8 @@ public class TigerRemoteProxyClient extends AbstractTigerProxy implements AutoCl
                                 .map(RbelElement::getConversionPhase))
                     .addArgument(waitingParsingTasks::size)
                     .log(
-                        "Signal new completed message {} (Phase {}) from {} - releasing {} queued tasks",
+                        "Signal new completed message {} (Phase {}) from {} - releasing {} queued"
+                            + " tasks",
                         remoteProxyUrl);
                 if (removedMessageUuids.contains(uuid)) {
                   removedMessageUuids.remove(uuid);

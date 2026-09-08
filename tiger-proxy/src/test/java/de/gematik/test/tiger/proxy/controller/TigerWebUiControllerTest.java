@@ -41,6 +41,7 @@ import de.gematik.test.tiger.proxy.TigerProxy;
 import de.gematik.test.tiger.proxy.TigerProxyTestHelper;
 import io.restassured.RestAssured;
 import io.restassured.response.Response;
+import io.restassured.specification.RequestSpecification;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -76,6 +77,7 @@ class TigerWebUiControllerTest {
   @LocalServerPort private int adminPort;
   private static final int TOTAL_OF_EXCHANGED_MESSAGES = 4;
   private int fakeBackendServerPort;
+  private RequestSpecification requestSpecification;
 
   @BeforeEach
   void setupBackendServer(WireMockRuntimeInfo runtimeInfo) {
@@ -90,8 +92,6 @@ class TigerWebUiControllerTest {
 
     runtimeInfo.getWireMock().register(post("/foobar").willReturn(ok().withBody("")));
 
-    RestAssured.proxy = null;
-
     tigerProxy.clearAllMessages();
 
     try (val proxyRest = Unirest.spawnInstance()) {
@@ -103,6 +103,8 @@ class TigerWebUiControllerTest {
 
     TigerProxyTestHelper.waitUntilMessageListInProxyContainsCountMessagesWithTimeout(
         tigerProxy, 4, 10);
+
+    requestSpecification = RestAssured.given().baseUri(getWebUiUrl());
   }
 
   @AfterEach
@@ -116,11 +118,15 @@ class TigerWebUiControllerTest {
     return url;
   }
 
+  private RequestSpecification requestSpec() {
+    return requestSpecification;
+  }
+
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkMsgIsReturned() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100")
+    requestSpec()
+        .get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(TOTAL_OF_EXCHANGED_MESSAGES))
@@ -132,8 +138,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkRbelExpression_invalid() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testRbelExpression?query='*&messageUuid=" + uuid)
+    requestSpec()
+        .get("/testRbelExpression?query='*&messageUuid=" + uuid)
         .then()
         .statusCode(200)
         .body("messageUuid", equalTo(uuid))
@@ -145,8 +151,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkJexlQuery_invalid() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testJexlQuery?query='*&messageUuid=" + uuid)
+    requestSpec()
+        .get("/testJexlQuery?query='*&messageUuid=" + uuid)
         .then()
         .statusCode(200)
         .body("messageUuid", equalTo(uuid))
@@ -158,8 +164,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_testJexlQuery() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testJexlQuery?query=$.*&messageUuid=" + uuid)
+    requestSpec()
+        .get("/testJexlQuery?query=$.*&messageUuid=" + uuid)
         .then()
         .statusCode(200)
         .body("messageUuid", equalTo(uuid))
@@ -170,8 +176,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_testRbelExpression() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testRbelExpression?query=$.*&messageUuid=" + uuid)
+    requestSpec()
+        .get("/testRbelExpression?query=$.*&messageUuid=" + uuid)
         .then()
         .statusCode(200)
         .body("messageUuid", equalTo(uuid))
@@ -183,8 +189,8 @@ class TigerWebUiControllerTest {
   void testRbelExpression_returnsJsonTreeAlongsideHtmlTree() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
     final var jsonPath =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/testRbelExpression?query=$.*&messageUuid=" + uuid)
+        requestSpec()
+            .get("/testRbelExpression?query=$.*&messageUuid=" + uuid)
             .then()
             .statusCode(200)
             .extract()
@@ -206,8 +212,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_testFilterMessages() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testFilterMessages?filterRbelPath=isRequest")
+    requestSpec()
+        .get("/testFilterMessages?filterRbelPath=isRequest")
         .then()
         .statusCode(200)
         .body("filter.rbelPath", equalTo("isRequest"));
@@ -216,8 +222,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_searchMessages() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/searchMessages?filterRbelPath=isRequest&searchRbelPath=isRequest")
+    requestSpec()
+        .get("/searchMessages?filterRbelPath=isRequest&searchRbelPath=isRequest")
         .then()
         .statusCode(200)
         .body("filter.rbelPath", equalTo("isRequest"))
@@ -227,7 +233,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_getMessagesWithHtml() {
-    RestAssured.given()
+    requestSpec()
         .get(
             getWebUiUrl()
                 + "/getMessagesWithHtml?fromOffset=100&toOffsetExcluding=200&filterRbelPath=isRequest")
@@ -241,8 +247,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfParametersAreReplayed_getMessagesWithMeta() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithMeta?filterRbelPath=isRequest")
+    requestSpec()
+        .get("/getMessagesWithMeta?filterRbelPath=isRequest")
         .then()
         .statusCode(200)
         .body("filter.rbelPath", equalTo("isRequest"));
@@ -251,13 +257,13 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void getMessagesWithMeta_acceptsSortOrderParameter() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=TIMESTAMP")
+    requestSpec()
+        .get("/getMessagesWithMeta?sortOrder=TIMESTAMP")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(TOTAL_OF_EXCHANGED_MESSAGES));
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=SEQUENCE")
+    requestSpec()
+        .get("/getMessagesWithMeta?sortOrder=SEQUENCE")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(TOTAL_OF_EXCHANGED_MESSAGES));
@@ -267,17 +273,12 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void getMessagesWithMeta_hashChangesWhenNotesChange() {
     final var baselineHash =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta")
-            .then()
-            .statusCode(200)
-            .extract()
-            .path("hash");
+        requestSpec().get("/getMessagesWithMeta").then().statusCode(200).extract().path("hash");
 
     tigerProxy.getRbelMessagesList().get(0).addFacet(RbelNoteFacet.info("added note"));
 
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithMeta")
+    requestSpec()
+        .get("/getMessagesWithMeta")
         .then()
         .statusCode(200)
         .body("hash", not(equalTo(baselineHash)));
@@ -286,7 +287,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void getMessagesWithHtml_acceptsSortOrderParameter() {
-    RestAssured.given()
+    requestSpec()
         .get(
             getWebUiUrl()
                 + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&sortOrder=SEQUENCE")
@@ -300,8 +301,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void getMessagesAsHtmlPage_shouldReturnRenderedHtml() {
     final var response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesAsHtmlPage")
+        requestSpec()
+            .get("/getMessagesAsHtmlPage")
             .then()
             .statusCode(200)
             .contentType("text/html")
@@ -321,11 +322,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void sortOrder_unknownValue_yieldsBadRequest() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=NOT_A_VALID_VALUE")
-        .then()
-        .statusCode(400);
-    RestAssured.given()
+    requestSpec().get("/getMessagesWithMeta?sortOrder=NOT_A_VALID_VALUE").then().statusCode(400);
+    requestSpec()
         .get(
             getWebUiUrl()
                 + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&sortOrder=NOPE")
@@ -337,15 +335,15 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void sortOrder_doesNotChangeHash() {
     final String hashTimestamp =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=TIMESTAMP")
+        requestSpec()
+            .get("/getMessagesWithMeta?sortOrder=TIMESTAMP")
             .then()
             .statusCode(200)
             .extract()
             .path("hash");
     final String hashSequence =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=SEQUENCE")
+        requestSpec()
+            .get("/getMessagesWithMeta?sortOrder=SEQUENCE")
             .then()
             .statusCode(200)
             .extract()
@@ -357,15 +355,10 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void sortOrder_defaultsToTimestamp() {
     final String hashDefault =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta")
-            .then()
-            .statusCode(200)
-            .extract()
-            .path("hash");
+        requestSpec().get("/getMessagesWithMeta").then().statusCode(200).extract().path("hash");
     final String hashExplicit =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta?sortOrder=TIMESTAMP")
+        requestSpec()
+            .get("/getMessagesWithMeta?sortOrder=TIMESTAMP")
             .then()
             .statusCode(200)
             .extract()
@@ -376,8 +369,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfFilterMessagesReturnsErrorOnInvalidRbelPath() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/testFilterMessages?filterRbelPath=blablub")
+    requestSpec()
+        .get("/testFilterMessages?filterRbelPath=blablub")
         .then()
         .statusCode(200)
         .body("searchFilter", equalTo(null))
@@ -387,8 +380,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfSearchMessagesReturnsErrorOnInvalidRbelPath() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/searchMessages?filterRbelPath=isRequest&searchRbelPath=blablub")
+    requestSpec()
+        .get("/searchMessages?filterRbelPath=isRequest&searchRbelPath=blablub")
         .then()
         .statusCode(200)
         .body("filter.rbelPath", equalTo("isRequest"))
@@ -399,7 +392,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkIfSearchMessagesReturnsFilteredAndSearchedMessages() {
-    RestAssured.given()
+    requestSpec()
         .get(
             getWebUiUrl()
                 + "/searchMessages?filterRbelPath=isRequest&searchRbelPath=$.body.foo == \"bar\"")
@@ -413,8 +406,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkNoMsgIsReturnedIfNoneExistsAfterRequested() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=100&toOffsetExcluding=200")
+    requestSpec()
+        .get("/getMessagesWithHtml?fromOffset=100&toOffsetExcluding=200")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(0))
@@ -425,10 +418,10 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkNoMsgIsReturnedAfterReset() {
-    RestAssured.given().get(getWebUiUrl() + "/resetMessages").then().statusCode(200);
+    requestSpec().get("/resetMessages").then().statusCode(200);
 
-    RestAssured.given()
-        .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100")
+    requestSpec()
+        .get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(0))
@@ -438,10 +431,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void filterOutResponses_shouldStillAppearInPairs() {
-    RestAssured.given()
-        .get(
-            getWebUiUrl()
-                + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&filterRbelPath=isRequest")
+    requestSpec()
+        .get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&filterRbelPath=isRequest")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(TOTAL_OF_EXCHANGED_MESSAGES))
@@ -451,10 +442,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void filterOutRequests_shouldStillAppearInPairs() {
-    RestAssured.given()
-        .get(
-            getWebUiUrl()
-                + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&filterRbelPath=isResponse")
+    requestSpec()
+        .get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100&filterRbelPath=isResponse")
         .then()
         .statusCode(200)
         .body("messages.size()", equalTo(TOTAL_OF_EXCHANGED_MESSAGES))
@@ -464,8 +453,8 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkAllTrafficSuppliedWhenDownloadWithoutFilteredUuids() {
-    RestAssured.given()
-        .get(getWebUiUrl() + "/trafficLog.tgr")
+    requestSpec()
+        .get("/trafficLog.tgr")
         .then()
         .statusCode(200)
         .body(
@@ -485,18 +474,13 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void simulateTrafficDownloadResetAndUpload() {
-    final String downloadedTraffic =
-        RestAssured.given().get(getWebUiUrl() + "/trafficLog.tgr").body().asString();
+    final String downloadedTraffic = requestSpec().get("/trafficLog.tgr").body().asString();
 
-    RestAssured.given().get(getWebUiUrl() + "/resetMessages").then().statusCode(200);
+    requestSpec().get("/resetMessages").then().statusCode(200);
 
     assertThat(tigerProxy.getMessages()).isEmpty();
 
-    RestAssured.with()
-        .body(downloadedTraffic)
-        .post(getWebUiUrl() + "/importTraffic")
-        .then()
-        .statusCode(200);
+    requestSpec().body(downloadedTraffic).post("/importTraffic").then().statusCode(200);
 
     TigerProxyTestHelper.waitUntilMessageListInProxyContainsCountMessagesWithTimeout(
         tigerProxy, TOTAL_OF_EXCHANGED_MESSAGES, 20);
@@ -505,7 +489,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void downloadTraffic_without_filterRbelPath() {
-    final Response response = RestAssured.given().get(getWebUiUrl() + "/trafficLog12334.tgr");
+    final Response response = requestSpec().get("/trafficLog12334.tgr");
     log.info("Response: {}", response.asString());
     response
         .then()
@@ -529,8 +513,8 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void downloadTraffic_with_filterRbelPath() {
     String filterRbelPath = "$.method == 'POST'";
-    RestAssured.given()
-        .get(getWebUiUrl() + "/trafficLog12334.tgr?filterRbelPath=" + filterRbelPath)
+    requestSpec()
+        .get("/trafficLog12334.tgr?filterRbelPath=" + filterRbelPath)
         .then()
         .statusCode(200)
         .header("available-messages", String.valueOf(2))
@@ -558,21 +542,16 @@ class TigerWebUiControllerTest {
     String filterRbelPath = "$.method == 'POST'";
 
     var trafficFileContent =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/trafficLog12334.tgr?filterRbelPath=" + filterRbelPath);
+        requestSpec().get("/trafficLog12334.tgr?filterRbelPath=" + filterRbelPath);
     trafficFileContent
         .then()
         .statusCode(200)
         .header("available-messages", String.valueOf(TOTAL_OF_EXCHANGED_MESSAGES - 2));
 
-    RestAssured.given().get(getWebUiUrl() + "/resetMessages");
+    requestSpec().get("/resetMessages");
     assertThat(tigerProxy.getMessages()).isEmpty();
 
-    RestAssured.with()
-        .body(trafficFileContent.asString())
-        .post(getWebUiUrl() + "/importTraffic")
-        .then()
-        .statusCode(200);
+    requestSpec().body(trafficFileContent.asString()).post("/importTraffic").then().statusCode(200);
 
     var rbelMessages = tigerProxy.getRbelMessagesList();
 
@@ -796,8 +775,8 @@ class TigerWebUiControllerTest {
   void getFullHtmlMessage_validUuid_shouldReturnHtmlContent() {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
 
-    RestAssured.given()
-        .get(getWebUiUrl() + "/fullyRenderedMessage/" + uuid)
+    requestSpec()
+        .get("/fullyRenderedMessage/" + uuid)
         .then()
         .statusCode(200)
         .contentType("application/json")
@@ -811,10 +790,7 @@ class TigerWebUiControllerTest {
   void getFullHtmlMessage_invalidUuid_shouldReturn404() {
     final String invalidUuid = "invalid-uuid-12345";
 
-    RestAssured.given()
-        .get(getWebUiUrl() + "/fullyRenderedMessage/" + invalidUuid)
-        .then()
-        .statusCode(404);
+    requestSpec().get("/fullyRenderedMessage/" + invalidUuid).then().statusCode(404);
   }
 
   @Test
@@ -822,8 +798,8 @@ class TigerWebUiControllerTest {
   void getFullHtmlMessage_nonExistentUuid_shouldReturn404() {
     final String nonExistentUuid = "00000000-0000-0000-0000-000000000000";
 
-    RestAssured.given()
-        .get(getWebUiUrl() + "/fullyRenderedMessage/" + nonExistentUuid)
+    requestSpec()
+        .get("/fullyRenderedMessage/" + nonExistentUuid)
         .then()
         .statusCode(404)
         .body(containsString(nonExistentUuid));
@@ -835,8 +811,8 @@ class TigerWebUiControllerTest {
     final var uuid = tigerProxy.getRbelMessagesList().get(0).getUuid();
 
     final var response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/fullyRenderedMessage/" + uuid)
+        requestSpec()
+            .get("/fullyRenderedMessage/" + uuid)
             .then()
             .statusCode(200)
             .contentType("application/json")
@@ -856,8 +832,8 @@ class TigerWebUiControllerTest {
     final var messages = tigerProxy.getRbelMessagesList();
 
     for (var message : messages) {
-      RestAssured.given()
-          .get(getWebUiUrl() + "/fullyRenderedMessage/" + message.getUuid())
+      requestSpec()
+          .get("/fullyRenderedMessage/" + message.getUuid())
           .then()
           .statusCode(200)
           .contentType("application/json")
@@ -871,12 +847,7 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void getMessagesWithMeta_shouldReturnMessagesSortedByTimestamp() {
     var response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithMeta")
-            .then()
-            .statusCode(200)
-            .extract()
-            .response();
+        requestSpec().get("/getMessagesWithMeta").then().statusCode(200).extract().response();
 
     var timestamps =
         response.jsonPath().getList("messages.timestamp", String.class).stream()
@@ -896,7 +867,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void getFullHtmlMessage_emptyUuid_shouldReturn404() {
-    RestAssured.given().get(getWebUiUrl() + "/fullyRenderedMessage/").then().statusCode(404);
+    requestSpec().get("/fullyRenderedMessage/").then().statusCode(404);
   }
 
   @Test
@@ -925,8 +896,8 @@ class TigerWebUiControllerTest {
     assertThat(largeMessage.getSize()).isGreaterThan(KB);
 
     final var response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/fullyRenderedMessage/" + uuid)
+        requestSpec()
+            .get("/fullyRenderedMessage/" + uuid)
             .then()
             .statusCode(200)
             .contentType("application/json")
@@ -948,8 +919,7 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkHashChangesWhenNoteIsAdded() {
     Response response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+        requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String initialHash = response.jsonPath().getString("hash");
 
     // Add a note to the first message
@@ -960,9 +930,7 @@ class TigerWebUiControllerTest {
         .next()
         .addFacet(new RbelNoteFacet("Test Note"));
 
-    response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+    response = requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String updatedHash = response.jsonPath().getString("hash");
 
     assertThat(updatedHash).isNotEqualTo(initialHash);
@@ -976,16 +944,13 @@ class TigerWebUiControllerTest {
     firstMessage.addFacet(note);
 
     Response response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+        requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String initialHash = response.jsonPath().getString("hash");
 
     // Remove the note
     firstMessage.removeFacet(note);
 
-    response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+    response = requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String updatedHash = response.jsonPath().getString("hash");
 
     assertThat(updatedHash).isNotEqualTo(initialHash);
@@ -994,9 +959,7 @@ class TigerWebUiControllerTest {
   @Test
   @ResourceLock(value = "TigerWebUiController")
   void checkHashChangesWhenNoteIsAddedOutsideRange() {
-    Response response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=1");
+    Response response = requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=1");
     String initialHash = response.jsonPath().getString("hash");
 
     // Add a note to the SECOND message (index 1), which is outside the range 0..1
@@ -1006,9 +969,7 @@ class TigerWebUiControllerTest {
     val secondMessage = it.next();
     secondMessage.addFacet(new RbelNoteFacet("Outside Range Note"));
 
-    response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=1");
+    response = requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=1");
     String updatedHash = response.jsonPath().getString("hash");
 
     assertThat(updatedHash).isNotEqualTo(initialHash);
@@ -1018,8 +979,7 @@ class TigerWebUiControllerTest {
   @ResourceLock(value = "TigerWebUiController")
   void checkHashChangesWhenAnyFacetIsAdded() {
     Response response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+        requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String initialHash = response.jsonPath().getString("hash");
 
     // Add a dummy facet to the first message
@@ -1030,9 +990,7 @@ class TigerWebUiControllerTest {
         .next()
         .addFacet(new de.gematik.rbellogger.data.core.RbelFacet() {});
 
-    response =
-        RestAssured.given()
-            .get(getWebUiUrl() + "/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
+    response = requestSpec().get("/getMessagesWithHtml?fromOffset=0&toOffsetExcluding=100");
     String updatedHash = response.jsonPath().getString("hash");
 
     assertThat(updatedHash).isNotEqualTo(initialHash);

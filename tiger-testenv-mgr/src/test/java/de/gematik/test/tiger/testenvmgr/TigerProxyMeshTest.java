@@ -781,7 +781,7 @@ class TigerProxyMeshTest extends AbstractTestTigerTestEnvMgr {
           .andTheInitialElement()
           .extractChildWithPath("$.sender")
           .asString()
-          .matches("((view-|)localhost|127\\.0\\.0\\.1):" + senderPort);
+          .isEqualTo("127.0.0.1:" + senderPort);
 
       assertThat(message)
           .hasStringContentEqualToAtPosition("$.receiver.domain", "reverseHostname")

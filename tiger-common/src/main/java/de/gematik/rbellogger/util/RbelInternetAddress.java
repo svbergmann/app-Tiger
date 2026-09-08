@@ -26,12 +26,15 @@ import de.gematik.test.tiger.common.config.TigerConfigurationKeys;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import lombok.AllArgsConstructor;
 import lombok.SneakyThrows;
 import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
+import lombok.val;
 import org.apache.commons.lang3.StringUtils;
 
 @Value
@@ -84,20 +87,59 @@ public class RbelInternetAddress {
   String hostname;
   byte[] ipAddress;
 
-  public static RbelInternetAddress fromInetAddress(InetAddress ipAddress) {
-    return new RbelInternetAddress(ipAddress.getHostName(), ipAddress.getAddress());
+  /**
+   * Named addresses compare by hostname, unnamed ones by bytes, and the two are never equal. See
+   * {@link RbelSocketAddress#isSameAddress} for the looser, resolving comparison.
+   */
+  @Override
+  public boolean equals(Object other) {
+    if (this == other) {
+      return true;
+    }
+    if (!(other instanceof RbelInternetAddress that)) {
+      return false;
+    }
+    if (hostname != null && that.hostname != null) {
+      // host names are case-insensitive (RFC 4343)
+      return hostname.equalsIgnoreCase(that.hostname);
+    }
+    if (hostname == null && that.hostname == null) {
+      return Arrays.equals(ipAddress, that.ipAddress);
+    }
+    return false;
   }
 
+  @Override
+  public int hashCode() {
+    return hostname != null
+        ? hostname.toLowerCase(Locale.ROOT).hashCode()
+        : Arrays.hashCode(ipAddress);
+  }
+
+  public static RbelInternetAddress fromInetAddress(InetAddress ipAddress) {
+    return new RbelInternetAddress(
+        RbelInternetAddressParser.hostnameWithoutLookup(ipAddress), ipAddress.getAddress());
+  }
+
+  /** Renders {@code hostname/ip}, resolving through the TTL cache to fill in a missing IP. */
   @SneakyThrows
   public String toString() {
-    if (ipAddress != null) {
-      if (StringUtils.isBlank(hostname)) {
-        return InetAddress.getByAddress(ipAddress).getHostAddress();
-      }
-      return hostname + "/" + InetAddress.getByAddress(ipAddress).getHostAddress();
-    } else {
+    val knownIp = ipAddress != null ? InetAddress.getByAddress(ipAddress) : resolveForRendering();
+    if (knownIp == null) {
       return hostname;
     }
+    if (StringUtils.isBlank(hostname)) {
+      return knownIp.getHostAddress();
+    }
+    return hostname + "/" + knownIp.getHostAddress();
+  }
+
+  /** Never let rendering fail on an unresolvable host - it simply prints without the IP. */
+  private InetAddress resolveForRendering() {
+    if (hostname == null) {
+      return null;
+    }
+    return toInetAddress().orElse(null);
   }
 
   @SneakyThrows
@@ -111,10 +153,17 @@ public class RbelInternetAddress {
     }
   }
 
+  /**
+   * The address this refers to, carrying the hostname whenever one is known so that a later {@code
+   * getHostName()} does not reverse-resolve.
+   */
   public Optional<InetAddress> toInetAddress() {
     if (ipAddress != null) {
       try {
-        return Optional.of(InetAddress.getByAddress(ipAddress));
+        return Optional.of(
+            hostname == null
+                ? InetAddress.getByAddress(ipAddress)
+                : InetAddress.getByAddress(hostname, ipAddress));
       } catch (UnknownHostException e) {
         return Optional.empty();
       }
@@ -134,9 +183,32 @@ public class RbelInternetAddress {
 
   private Optional<InetAddress> resolveHostname() {
     try {
-      return Optional.ofNullable(InetAddress.getByName(hostname));
+      return Optional.ofNullable(hostnameResolver.resolve(hostname));
     } catch (UnknownHostException e) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * The single point where a hostname becomes an address. Swappable for tests; a test that replaces
+   * it must restore it via {@link #resetHostnameResolver()}.
+   */
+  @FunctionalInterface
+  public interface HostnameResolver {
+    InetAddress resolve(String hostname) throws UnknownHostException;
+  }
+
+  public static final HostnameResolver REAL_RESOLVER = InetAddress::getByName;
+
+  @SuppressWarnings("java:S3008") // not a constant: tests replace it, hence the lower-case name
+  private static HostnameResolver hostnameResolver = REAL_RESOLVER;
+
+  public static void setHostnameResolver(HostnameResolver resolver) {
+    hostnameResolver = resolver;
+    clearResolvedHostnameCache();
+  }
+
+  public static void resetHostnameResolver() {
+    setHostnameResolver(REAL_RESOLVER);
   }
 }

@@ -35,7 +35,10 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Stream;
+import javax.annotation.Nullable;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -64,7 +67,7 @@ public class ReusableChannelMap {
 
     // Deliberately outside the monitor: this can block on the OS resolver, and holding the pool
     // lock across it would put every other thread behind a network call.
-    val currentAddress = channelId.resolveCurrentAddress();
+    val currentAddress = resolveDestinationOf(requestInfo, channelId);
 
     synchronized (this) {
       evictChannelsPointingElsewhere(channelId, currentAddress);
@@ -89,6 +92,28 @@ public class ReusableChannelMap {
   /** Skipping the lookup for an empty bucket keeps the resolution off the common path. */
   private boolean nothingPooledFor(ChannelId channelId) {
     return channelMap.get(channelId).isEmpty();
+  }
+
+  /**
+   * Where this request is headed right now; empty when there is no name to re-resolve, so a
+   * transient DNS failure leaves pooled channels alone rather than evicting them. Must be called
+   * outside the pool monitor - it blocks on the OS resolver when the DNS cache misses.
+   */
+  private static Optional<InetAddress> resolveDestinationOf(
+      RequestInfo<?> requestInfo, ChannelId channelId) {
+    return destinationName(requestInfo, channelId)
+        .flatMap(name -> new RbelInternetAddress(name, null).toInetAddress());
+  }
+
+  private static Optional<String> destinationName(RequestInfo<?> requestInfo, ChannelId channelId) {
+    return Stream.of(hostStringOf(requestInfo.retrieveActualRemoteAddress()), channelId.host())
+        .filter(Objects::nonNull)
+        .filter(name -> !InetAddresses.isInetAddress(name))
+        .findFirst();
+  }
+
+  private static String hostStringOf(@Nullable InetSocketAddress address) {
+    return address == null ? null : address.getHostString();
   }
 
   /** Drops pooled channels whose socket points where the hostname no longer resolves. */
@@ -292,20 +317,6 @@ public class ReusableChannelMap {
           remoteAddress == null ? null : remoteAddress.getHostString(),
           remoteAddress == null ? -1 : remoteAddress.getPort(),
           false);
-    }
-
-    /**
-     * Where {@link #host} points right now; empty for an IP literal or an unresolvable name, so a
-     * transient DNS failure leaves pooled channels alone rather than evicting them.
-     *
-     * <p>Must be called outside the pool monitor - it blocks on the OS resolver when the DNS cache
-     * misses.
-     */
-    public Optional<InetAddress> resolveCurrentAddress() {
-      if (host == null || InetAddresses.isInetAddress(host)) {
-        return Optional.empty();
-      }
-      return new RbelInternetAddress(host, null).toInetAddress();
     }
   }
 }

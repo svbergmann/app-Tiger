@@ -50,7 +50,7 @@ class DataStompHandler implements StompFrameHandler {
                     .addArgument(tracingMessagePart::getUuid)
                     .addArgument(remoteProxyClient::getName)
                     .log("Received part {} of {} for UUID {} at {}");
-                remoteProxyClient.receiveNewMessagePart(tracingMessagePart);
+                remoteProxyClient.getMessageAssembler().receivePart(tracingMessagePart);
               },
               remoteProxyClient.getMeshHandlerPool())
           .exceptionally(

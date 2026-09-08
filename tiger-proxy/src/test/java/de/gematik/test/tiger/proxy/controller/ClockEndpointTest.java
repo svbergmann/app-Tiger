@@ -24,8 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.gematik.test.tiger.config.ResetTigerConfiguration;
 import io.restassured.RestAssured;
+import io.restassured.builder.RequestSpecBuilder;
+import io.restassured.specification.RequestSpecification;
 import java.time.ZonedDateTime;
-import java.time.temporal.ChronoUnit;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,9 +48,11 @@ class ClockEndpointTest {
   void clockEndpoint_returnsCurrentTime() {
     ZonedDateTime before = ZonedDateTime.now();
 
+    RequestSpecification requestSpec = new RequestSpecBuilder().setPort(port).build();
+
     var response =
         RestAssured.given()
-            .port(port)
+            .spec(requestSpec)
             .get("/clock")
             .then()
             .statusCode(200)
@@ -65,7 +68,7 @@ class ClockEndpointTest {
 
     assertThat(serverTime)
         .as("Server time should be between the before and after timestamps")
-        .isAfterOrEqualTo(before.minus(1, ChronoUnit.SECONDS))
-        .isBeforeOrEqualTo(after.plus(1, ChronoUnit.SECONDS));
+        .isAfterOrEqualTo(before.minusSeconds(1))
+        .isBeforeOrEqualTo(after.plusSeconds(1));
   }
 }

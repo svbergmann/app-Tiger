@@ -598,85 +598,11 @@ httpbin:
     serverPort: ${free.port.0}
     healthcheckUrl: http://localhost:${free.port.0}/status/200
 
-=== Provided node templates
-
-Besides these basic nodes we also support tailored templates for nodes like IDP, ePA, ERp and DEMIS.
-This should allow you to bring up project specific test environments very fast.
-
-All currently supported templates can be found in the tiger-testenv-mgr modul in the yaml file at /src/main/resources/de/gematik/test/tiger/testenvmgr/templates.yaml
-
-To use such a template, just use the template attribute:
-
-[source,yaml]
-----
-myPersonalTestIDPInTheRU:
-  template: idp-rise-ru
-----
-
-or if you want to have an environment with a local reference implementation of the ERezept Fachdienst
-
-[source,yaml]
-----
-myLocalTestIDP:
-  template: idp-ref
-  hostname: idp
-
-myLocalTestERp:
-  template: erzpt-fd-ref
-  dependsUpon: myLocalTestIDP
-----
-
-==== Local IDP reference nodes
-
-This template provides the reference implementation of the IDP server as a local docker container.
-The docker image is loaded from a gematik internal docker registry server.
-
-The system property IDP_SERVER is set to the URL of the Discovery Document end point and is available for all subsequently initiated test environment nodes.
-
-==== External IDP RISE instance nodes
-
-The idp-rise-ru template provides the RU instance of RISE's IDP server as an "external URL".
-The system properties IDP_SERVER and GEMATIK_TESTCONFIG are set to the URL of the Discovery Document end point and a config-file for the IDP test suite respectively.
-They are available for all subsequently initiated test environment nodes.
-
-The idp-rise-tu template provides the TU instance accordingly.
-
-==== Local ERp reference nodes
-
-This template provides the reference implementation of the eRezept server as a local docker container.
-The docker image is loaded from a gematik internal docker registry server.
-Make sure that an IDP server node is instantiated before the ERp FD is started and that it is available under http://idp or adapt the environment variable configuration.
-
-A large list of environment variables is set.
-But don't worry, it is just the server that uses them.
-
-==== Local ePA2 reference nodes
-
-This template provides the gematik reference Aktensystem simulation as docker compose.
-
-==== Local PSSim node
-
-This template provides a Primärsystem simulation (as a jar), usable for ePA.
-See https://wiki.gematik.de/display/PTP/epa-ps for more information.
-
-==== Local KonSim node
-
-This template provides a Konnektor simulation (as external jar).
-See https://wiki.gematik.de/display/PTP/KonSim for more information.
-
-==== Local ePA FdV Sim
-
-This template provides FdV simulation, usable for ePA.
-
-==== Local DEMIS reference nodes
-
-This template provides the DEMIS Meldeportal as local docker compose.
-
 [#_configuring_the_local_test_suite_tiger_proxy]
 === Configuring the local test suite Tiger Proxy
 
 The local Tiger Proxy for the test suite can be configured by using the following section(s) in the `tiger.yaml` file.
-For more information about what the Tiger Proxy is and how it works see the chapter xref:tigerProxy.adoc#_tiger_proxy_basics[Tiger Proxy basics]
+For more information about what the Tiger Proxy is and how it works, see the chapter xref:tigerProxy.adoc#_tiger_proxy_basics[Tiger Proxy basics]
 
 [source,yaml]
 ----

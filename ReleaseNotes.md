@@ -1,5 +1,106 @@
 # Changelog Tiger Test platform
 
+# Release 4.4.3
+
+## Bugfixes
+
+* TGR-1363: Tiger Proxy no longer performs a reverse DNS lookup to name the peers of a recorded connection. Previously the
+  `sender`/`receiver` of a message was labelled with whatever the local hosts file returned for the peer IP, so the same
+  traffic was recorded as `localhost`, `view-localhost` or `kubernetes.docker.internal` depending on the machine - and an
+  unresolvable peer stalled the recording for the full resolver timeout (10 seconds by default).
+
+  Addresses are now named from the information the connection already carries: a hostname that was explicitly used
+  (a route target, a `Host` header, a `hostname` in `tiger.yaml`) is kept verbatim, every loopback peer is consistently
+  named `localhost`, and any other peer without a known hostname is described by its IP. Message pairing compares the
+  resolved IP instead of the canonical hostname for the same reason.
+
+  Test suites that asserted on `sender`/`receiver` can now expect an exact value instead of matching against a list of
+  possible local aliases.
+* TGR-2231: Tiger-Proxy: a backend that changes its address during a run — a redeploy, a failover, a DNS
+  change — is now followed, instead of traffic continuing to the old address until the run is
+  restarted. Addresses are re-checked periodically; the interval defaults to 30 seconds:
+
+  ```yaml
+  tiger:
+    rbel:
+      dnsCacheTtlSeconds: 30
+  ```
+
+  Tiger-Proxy: HTTPS connections use the hostname from the request when negotiating TLS. Previously
+  the name could be derived from the target's IP address, so a server could answer with the wrong
+  certificate or refuse the handshake.
+
+  Tiger-Proxy: a host listed under `noProxyHosts` that briefly failed to resolve was sent through the
+  forward proxy anyway for the next ten minutes, then started working again on its own.
+
+  Tiger-Proxy: long runs are noticeably faster, especially through a forward proxy, where every
+  request previously paid for a fresh connection setup.
+* TGR-2235: A test run using a `tigerProxy` server no longer hangs after the last test has finished. Shutting down such a server
+  only *stopped* its Spring context instead of closing it, so the embedded Tomcat and the websocket task schedulers of
+  the tracing endpoint kept running. Because those are non-daemon threads, the JVM stayed alive and the build had to be
+  killed manually (or waited for a CI timeout).
+
+  The Spring context is now properly closed on shutdown, which destroys the web server and terminates the tracing
+  endpoint's thread pools. No configuration change is required - test suites that previously needed a forced JVM exit to
+  terminate now end on their own.
+* TGR-2260: In a mesh setup (`trafficEndpoints`), a message that only arrived halfway over the tracing websocket no longer hides
+  every message recorded after it on the same connection. Affected test suites failed with "No request with path ... found
+  in messages" although the upstream proxy had visibly recorded the request.
+
+  Messages queued behind a stuck one are now released after
+  `tiger.tigerProxy.maximumPartialMessageAgeInSeconds` at the latest. Lower that value to fail faster.
+* TGR-2261: Meshed Tiger proxies could close their tracing connection under load
+  (`SESSION_NOT_RELIABLE`), showing up as half-delivered messages or reconnects. Fixed by
+  giving the tracing buffer more headroom.
+
+  Two new properties control the tracing send buffer:
+
+  ```yaml
+  tigerProxy:
+    stompServerSendBufferSizeInMb: 16       # new
+    stompServerSendTimeLimitInSeconds: 20   # new
+  ```
+
+  No action is required to pick up the new defaults; tune these only if you need something
+  different.
+* TGR-2262: In a mesh setup (`trafficEndpoints`), the frames a traced message is transmitted in - one metadata frame plus
+  n data frames - could reach the receiving proxy in a different order than they were sent. Messages then
+  finished assembling out of the order in which they were recorded and were held back until their predecessor
+  caught up. Frames now keep their send order on every tracing connection.
+
+  Delivery is no longer serialised across connections either: on a proxy that several mesh clients are attached
+  to, one slow client no longer holds up delivery to the others.
+* TGR-2264: A message that arrived only partially before a Tiger proxy reconnected to a remote proxy
+  could permanently disappear instead of being recovered by the automatic catch-up download
+  that runs after reconnecting.
+* TGR-2265: Incomplete tracing messages in a mesh setup (`trafficEndpoints`) are now cleaned up by a periodic task instead of only
+  when the next message arrives. Previously the cleanup never ran once the traffic stopped - which is exactly the
+  situation at the end of a test scenario - so messages queued behind a half-received one were held back indefinitely.
+
+  `tiger.tigerProxy.maximumPartialMessageAgeInSeconds` now measures the time since the last part of a message arrived
+  rather than the age of the message as a whole, so a large message that is still streaming in is no longer discarded for
+  being slow - only one that has genuinely stopped making progress. Its default dropped from 300 to 30 seconds.
+* TGR-2266: A Tiger proxy could lose its connection to a remote proxy and reconnect unnecessarily under
+  load, if clock synchronization or the initial traffic catch-up download after connecting took
+  a while.
+* TGR-2267: A Tiger proxy could start several overlapping reconnect attempts to a remote proxy at once
+  under load, each with its own traffic catch-up download, corrupting each other's view of
+  which traffic had already been fetched. A permanently unreachable remote could also be
+  retried in a tight loop with no pause between attempts.
+* TGR-2268: After a Tiger proxy reconnected to a remote proxy, messages could be recorded in the wrong
+  order - a message showing up ahead of the one it actually followed - if the catch-up download
+  of the earlier message took a while.
+* TGR-2279: A tracing connection between meshed Tiger proxies that was cut while idle - typically by an
+  ingress or load balancer closing an idle connection - went unnoticed until the next message was
+  sent, by which point that message was already lost. Both ends now exchange heartbeats and notice
+  the connection is gone while there is still nothing to lose.
+
+  ```yaml
+  tigerProxy:
+    stompHeartbeatInSeconds: 10   # new
+  ```
+
+
 # Release 4.4.2
 
 ## Breaking Changes

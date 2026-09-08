@@ -211,13 +211,21 @@ public class Expectation extends ObjectWithJsonToString implements Comparable<Ex
     return false;
   }
 
+  /**
+   * Whether two host strings denote the same machine - which is what lets a route written as {@code
+   * http://127.0.0.1} match a request addressed to {@code localhost}. Compares the
+   * <em>resolved</em> addresses, through the cache that expires.
+   */
   private boolean resolveHostHeaderAndCompare(
       String cleanedHostHeader, String cleanedPatternHostHeader) {
     if (StringUtils.isEmpty(cleanedPatternHostHeader) || StringUtils.isEmpty(cleanedHostHeader)) {
       return false;
     }
-    return RbelInternetAddressParser.parseInetAddress(cleanedHostHeader)
-        .equals(RbelInternetAddressParser.parseInetAddress(cleanedPatternHostHeader));
+    val host = RbelInternetAddressParser.parseInetAddress(cleanedHostHeader).toInetAddress();
+    // two hosts that both fail to resolve are not thereby the same host
+    return host.isPresent()
+        && host.equals(
+            RbelInternetAddressParser.parseInetAddress(cleanedPatternHostHeader).toInetAddress());
   }
 
   private boolean compareHostRegexList(String cleanedHostHeader) {

@@ -29,6 +29,7 @@ import net.datafaker.Faker;
 @NoArgsConstructor(access = AccessLevel.PRIVATE)
 public class NameGenerator {
 
+  @SuppressWarnings("java:S2245") // deterministic, reproducible name generation, not security-sensitive
   public static String generateName(int seedValue) {
     var random = new Random(seedValue);
     var faker = new Faker(random);

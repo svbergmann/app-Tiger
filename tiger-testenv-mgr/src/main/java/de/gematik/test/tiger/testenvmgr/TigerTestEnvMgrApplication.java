@@ -44,8 +44,8 @@ public class TigerTestEnvMgrApplication implements ServletContextListener {
     new SpringApplicationBuilder()
         .bannerMode(Mode.OFF)
         .properties(properties)
+        .main(TigerTestEnvMgrApplication.class)
         .sources(TigerTestEnvMgrApplication.class)
-        .initializers()
         .run(args);
   }
 

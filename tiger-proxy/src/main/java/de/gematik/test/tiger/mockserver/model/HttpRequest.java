@@ -29,6 +29,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.google.common.net.HostAndPort;
 import de.gematik.rbellogger.data.RbelElement;
+import de.gematik.rbellogger.util.RbelInternetAddressParser;
 import java.net.InetSocketAddress;
 import java.util.*;
 import lombok.*;
@@ -248,10 +249,11 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
           receiverAddress.getScheme() != null
               && receiverAddress.getScheme().equals(SocketAddress.Scheme.HTTPS);
       val port = computePort(receiverAddress.getPort(), isSsl);
-      return Optional.of(new InetSocketAddress(receiverAddress.getHost(), port));
+      return Optional.of(socketAddressFor(receiverAddress.getHost(), port));
     } else if (isNotBlank(getFirstHeader(HOST.toString()))) {
       boolean isSsl = Optional.ofNullable(isSecure()).orElse(false);
-      return Optional.of(parseHostAndPort(getFirstHeader(HOST.toString()), isSsl ? 443 : 80));
+      val hostPort = parseHostAndPort(getFirstHeader(HOST.toString()), isSsl ? 443 : 80);
+      return Optional.of(socketAddressFor(hostPort.getHostString(), hostPort.getPort()));
     } else {
       log.trace("No Host header or receiver address available for request: {} {}", method, path);
       return Optional.empty();
@@ -297,8 +299,10 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
   }
 
   /**
-   * Parses a host:port string, handling IPv6 addresses correctly. Examples: "example.com:8080",
+   * Splits a host:port string, handling IPv6 addresses correctly. Examples: "example.com:8080",
    * "example.com", "[::1]:8080", "192.168.1.1:443"
+   *
+   * <p>Returns an <em>unresolved</em> address; use {@link #socketAddressFor} to dial one.
    */
   private InetSocketAddress parseHostAndPort(String host, Integer port) {
     if (StringUtils.isBlank(host)) {
@@ -306,7 +310,18 @@ public class HttpRequest extends HttpMessage<HttpRequest> {
     }
 
     var hostAndPort = HostAndPort.fromString(host).withDefaultPort(port);
-    return new InetSocketAddress(hostAndPort.getHost(), hostAndPort.getPort());
+    return InetSocketAddress.createUnresolved(hostAndPort.getHost(), hostAndPort.getPort());
+  }
+
+  /**
+   * The address to dial for a host, resolved through the one cache that expires. An unresolvable
+   * host stays unresolved rather than throwing; netty reports it on connect.
+   */
+  private static InetSocketAddress socketAddressFor(String host, int port) {
+    return RbelInternetAddressParser.parseInetAddress(host)
+        .toInetAddress()
+        .map(address -> new InetSocketAddress(address, port))
+        .orElseGet(() -> InetSocketAddress.createUnresolved(host, port));
   }
 
   public String getMethodOrDefault(String fallback) {
