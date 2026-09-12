@@ -28,10 +28,13 @@ import de.gematik.test.tiger.testenvmgr.api.model.mapper.TigerTestIdentifier;
 import de.gematik.test.tiger.testenvmgr.data.TestSuiteLifecycle;
 import de.gematik.test.tiger.testenvmgr.env.ScenarioRunner;
 import de.gematik.test.tiger.testenvmgr.env.TigerStatusUpdate;
+import de.gematik.test.tiger.testenvmgr.util.ScenarioCollector;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.platform.engine.TestExecutionResult;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
@@ -46,15 +49,53 @@ import org.junit.platform.launcher.TestPlan;
 @NoArgsConstructor
 public class TigerExecutionListener implements TestExecutionListener {
 
+  /** Width chosen to keep progress lines compact in Maven and CI consoles. */
+  private static final int PROGRESS_BAR_WIDTH = 20;
+
   private boolean isATigerTest;
+
+  /** Number of scenario variants to report, or zero when progress reporting is disabled. */
+  private int totalScenarios;
+
+  /** Thread-safe because JUnit may execute scenarios concurrently. */
+  private final AtomicInteger completedScenarios = new AtomicInteger();
 
   @Override
   public void testPlanExecutionStarted(TestPlan testPlan) {
+    totalScenarios = 0;
     isATigerTest = TigerDirector.isInitialized();
     if (!isATigerTest) {
       return;
     }
-    ScenarioRunner.addTigerScenarios(testPlan);
+    // The scenario collection is also the source for the feature selector, so the console and UI
+    // always count the same selected scenario variants.
+    var tigerScenarios = ScenarioCollector.collectTigerScenarios(testPlan);
+    ScenarioRunner.addTigerScenarios(tigerScenarios);
+    totalScenarios =
+        testPlan
+                .getConfigurationParameters()
+                .getBoolean(EXECUTION_DRY_RUN_PROPERTY_NAME)
+                .orElse(false)
+            ? 0
+            : tigerScenarios.size();
+    completedScenarios.set(0);
+    if (totalScenarios > 0) {
+      log.info(formatProgress(0, totalScenarios));
+    }
+  }
+
+  /** Updates the console progress bar after each selected Cucumber scenario variant completes. */
+  @Override
+  public void executionFinished(
+      TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
+    if (totalScenarios > 0
+        && testIdentifier.isTest()
+        && testIdentifier.getUniqueIdObject().getSegments().stream()
+            .anyMatch(
+                segment ->
+                    segment.getType().equals("engine") && segment.getValue().equals("cucumber"))) {
+      log.info(formatProgress(completedScenarios.incrementAndGet(), totalScenarios));
+    }
   }
 
   @Override
@@ -92,5 +133,23 @@ public class TigerExecutionListener implements TestExecutionListener {
       ScenarioRunner.addTigerScenarios(
           List.of(new TigerTestIdentifier(testIdentifier, testIdentifier.getDisplayName())));
     }
+  }
+
+  /**
+   * Formats a fixed-width progress bar that remains readable in interactive terminals and CI logs.
+   *
+   * @param completed number of completed scenario variants
+   * @param total total number of selected scenario variants
+   * @return the human-readable progress line
+   */
+  static String formatProgress(int completed, int total) {
+    int filled = completed * PROGRESS_BAR_WIDTH / total;
+    return "Tiger test progress: [%s%s] %d/%d (%d%%)"
+        .formatted(
+            "=".repeat(filled),
+            " ".repeat(PROGRESS_BAR_WIDTH - filled),
+            completed,
+            total,
+            completed * 100 / total);
   }
 }
