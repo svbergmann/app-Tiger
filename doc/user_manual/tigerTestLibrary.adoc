@@ -171,7 +171,15 @@ Utilizing the close integration of SerenityBDD and RestAssured at startup also a
 The curl command shown in that section in the report allows to repeat the performed REST request, for manual test failure analysis.
 
 After each scenario / data variant all collected RbelMessages are saved as HTML file to the `target/rbellogs` folder, and attached to the SerenityBDD report as test evidence.
-The current test run state (success/failed rate) is logged to the console.
+JUnit Platform runs display a scenario progress bar at INFO level through the
+`io.cucumber.core.plugin.TigerExecutionListener` logger. Each Scenario Outline row counts as one
+scenario. The percentage measures completion, including failed scenarios; it is not a pass rate.
+The fixed total includes only discovered scenarios matching the effective Cucumber tag and name
+filters, excluding dry runs. Suite-specific settings are respected. Scenarios skipped during
+execution count towards completion and are shown separately; they do not change the total. Empty selections and dry runs
+produce no progress output. If execution stops before all scenarios finish, a warning reports
+how many were not executed. Each new test plan, including a rerun, starts a new counter.
+Progress uses ordinary log lines so that it remains readable in Maven and CI output.
 
 === Using the Cucumber Tiger validation steps
 

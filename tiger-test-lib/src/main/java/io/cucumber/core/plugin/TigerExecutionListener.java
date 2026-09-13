@@ -29,73 +29,40 @@ import de.gematik.test.tiger.testenvmgr.data.TestSuiteLifecycle;
 import de.gematik.test.tiger.testenvmgr.env.ScenarioRunner;
 import de.gematik.test.tiger.testenvmgr.env.TigerStatusUpdate;
 import de.gematik.test.tiger.testenvmgr.util.ScenarioCollector;
+import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.platform.engine.TestExecutionResult;
+import org.junit.platform.engine.UniqueId;
 import org.junit.platform.launcher.TestExecutionListener;
 import org.junit.platform.launcher.TestIdentifier;
 import org.junit.platform.launcher.TestPlan;
 
-/**
- * We register this listener to save the scenarios that are found by the cucumber engine. The main
- * purpose of finding them, is that we then get unique TestIdentifiers that make it much easier to
- * rerun tests. See
- * de.gematik.test.tiger.testenvmgr.env.ScenarioRunner#runTest(org.junit.platform.launcher.TestIdentifier)
- */
+/** Collects scenarios for Tiger's feature selector and reports their execution progress. */
 @Slf4j
 @NoArgsConstructor
 public class TigerExecutionListener implements TestExecutionListener {
 
-  /** Width chosen to keep progress lines compact in Maven and CI consoles. */
-  private static final int PROGRESS_BAR_WIDTH = 20;
+  private static final int BAR_WIDTH = 20;
+  private final Set<UniqueId> pending = new HashSet<>();
+  private int total;
+  private int skipped;
 
   private boolean isATigerTest;
 
-  /** Number of scenario variants to report, or zero when progress reporting is disabled. */
-  private int totalScenarios;
-
-  /** Thread-safe because JUnit may execute scenarios concurrently. */
-  private final AtomicInteger completedScenarios = new AtomicInteger();
-
   @Override
   public void testPlanExecutionStarted(TestPlan testPlan) {
-    totalScenarios = 0;
     isATigerTest = TigerDirector.isInitialized();
-    if (!isATigerTest) {
-      return;
-    }
-    // The scenario collection is also the source for the feature selector, so the console and UI
-    // always count the same selected scenario variants.
-    var tigerScenarios = ScenarioCollector.collectTigerScenarios(testPlan);
-    ScenarioRunner.addTigerScenarios(tigerScenarios);
-    totalScenarios =
-        testPlan
-                .getConfigurationParameters()
-                .getBoolean(EXECUTION_DRY_RUN_PROPERTY_NAME)
-                .orElse(false)
-            ? 0
-            : tigerScenarios.size();
-    completedScenarios.set(0);
-    if (totalScenarios > 0) {
-      log.info(formatProgress(0, totalScenarios));
-    }
-  }
-
-  /** Updates the console progress bar after each selected Cucumber scenario variant completes. */
-  @Override
-  public void executionFinished(
-      TestIdentifier testIdentifier, TestExecutionResult testExecutionResult) {
-    if (totalScenarios > 0
-        && testIdentifier.isTest()
-        && testIdentifier.getUniqueIdObject().getSegments().stream()
-            .anyMatch(
-                segment ->
-                    segment.getType().equals("engine") && segment.getValue().equals("cucumber"))) {
-      log.info(formatProgress(completedScenarios.incrementAndGet(), totalScenarios));
-    }
+    var scenarios =
+        isATigerTest
+            ? ScenarioCollector.collectTigerScenarios(testPlan)
+            : List.<TigerTestIdentifier>of();
+    ScenarioRunner.addTigerScenarios(scenarios);
+    startProgress(testPlan, scenarios);
   }
 
   @Override
@@ -103,6 +70,7 @@ public class TigerExecutionListener implements TestExecutionListener {
     if (!isATigerTest) {
       return;
     }
+    finishProgress();
     TigerDirector.getTigerTestEnvMgr()
         .receiveTestEnvUpdate(
             TigerStatusUpdate.builder().testSuiteLifecycle(TestSuiteLifecycle.IDLE).build());
@@ -135,21 +103,66 @@ public class TigerExecutionListener implements TestExecutionListener {
     }
   }
 
-  /**
-   * Formats a fixed-width progress bar that remains readable in interactive terminals and CI logs.
-   *
-   * @param completed number of completed scenario variants
-   * @param total total number of selected scenario variants
-   * @return the human-readable progress line
-   */
+  synchronized void startProgress(TestPlan plan, Collection<TigerTestIdentifier> scenarios) {
+    pending.clear();
+    skipped = 0;
+    var selection = new TigerScenarioSelection(plan);
+    scenarios.stream()
+        .map(TigerTestIdentifier::getTestIdentifier)
+        .filter(selection)
+        .map(TestIdentifier::getUniqueIdObject)
+        .forEach(pending::add);
+    total = pending.size();
+    report();
+  }
+
+  @Override
+  public synchronized void executionFinished(TestIdentifier test, TestExecutionResult result) {
+    if (pending.remove(test.getUniqueIdObject())) {
+      report();
+    }
+  }
+
+  @Override
+  public synchronized void executionSkipped(TestIdentifier test, String reason) {
+    int before = pending.size();
+    pending.removeIf(id -> id.hasPrefix(test.getUniqueIdObject()));
+    if (before != pending.size()) {
+      skipped += before - pending.size();
+      report();
+    }
+  }
+
+  synchronized void finishProgress() {
+    if (!pending.isEmpty()) {
+      log.warn(
+          "{}; run ended with {} scenarios not executed",
+          formatProgress(total - pending.size(), total),
+          pending.size());
+    }
+  }
+
+  private void report() {
+    if (total > 0) {
+      log.info(
+          "{}{}",
+          formatProgress(total - pending.size(), total),
+          skipped == 0 ? "" : "; " + skipped + " skipped");
+    }
+  }
+
+  /** Formats progress for a positive total and a completed count between zero and that total. */
   static String formatProgress(int completed, int total) {
-    int filled = completed * PROGRESS_BAR_WIDTH / total;
+    if (total <= 0 || completed < 0 || completed > total) {
+      throw new IllegalArgumentException("Expected 0 <= completed <= total and total > 0");
+    }
+    int filled = (int) ((long) completed * BAR_WIDTH / total);
     return "Tiger test progress: [%s%s] %d/%d (%d%%)"
         .formatted(
             "=".repeat(filled),
-            " ".repeat(PROGRESS_BAR_WIDTH - filled),
+            " ".repeat(BAR_WIDTH - filled),
             completed,
             total,
-            completed * 100 / total);
+            (long) completed * 100 / total);
   }
 }
